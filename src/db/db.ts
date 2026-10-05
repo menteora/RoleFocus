@@ -430,11 +430,14 @@ export class CouchDBSyncManager {
     }
   }
 
-  public async startLiveSync(config: CouchDBSettings) {
+  public async startLiveSync(config: CouchDBSettings): Promise<() => void> {
+    // 1. Cancel and cleanup any previously active syncs before starting a new one
     this.stopLiveSync();
 
     if (!config.enabled || !config.endpoint || !config.autoSync) {
-      return;
+      return () => {
+        this.stopLiveSync();
+      };
     }
 
     this.notifyState('connecting');
@@ -454,6 +457,7 @@ export class CouchDBSyncManager {
         await ensureRemoteDatabaseExists(config.endpoint, item.name, auth);
         const remoteDb = createRemoteDb(config.endpoint, item.name, auth);
 
+        // Save the result of local.sync(remote, {...}) into a variable
         const sync = item.col.getRawDB().sync(remoteDb, {
           live: true,
           retry: true,
@@ -483,6 +487,11 @@ export class CouchDBSyncManager {
     } catch (err: any) {
       this.notifyState('error', err.message || 'Errore di avvio sincronizzazione');
     }
+
+    // Return cleanup function to cancel all active replications
+    return () => {
+      this.stopLiveSync();
+    };
   }
 }
 

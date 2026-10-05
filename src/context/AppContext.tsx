@@ -229,18 +229,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
   }, [settingsRecord]);
 
-  // Handle CouchDB Live Sync initialization on settings change
+  // Stable primitive values for CouchDB sync to avoid re-triggering on unrelated re-renders
+  const couchEnabled = Boolean(settings.couchdb?.enabled);
+  const couchEndpoint = settings.couchdb?.endpoint || '';
+  const couchUsername = settings.couchdb?.username || '';
+  const couchPassword = settings.couchdb?.password || '';
+  const couchPrefix = settings.couchdb?.databasePrefix || 'rolefocus_';
+  const couchAutoSync = Boolean(settings.couchdb?.autoSync);
+
+  // Handle CouchDB Live Sync with stable dependencies and proper cleanup (.cancel())
   useEffect(() => {
-    if (settings.couchdb && settings.couchdb.enabled && settings.couchdb.endpoint) {
-      if (settings.couchdb.autoSync) {
-        syncManager.startLiveSync(settings.couchdb);
-      } else {
-        syncManager.stopLiveSync();
-      }
+    let active = true;
+
+    if (couchEnabled && couchEndpoint && couchAutoSync) {
+      const syncConfig: CouchDBSettings = {
+        enabled: couchEnabled,
+        endpoint: couchEndpoint,
+        username: couchUsername,
+        password: couchPassword,
+        databasePrefix: couchPrefix,
+        autoSync: couchAutoSync,
+      };
+
+      syncManager.startLiveSync(syncConfig).then((cancelFn) => {
+        if (!active && cancelFn) {
+          cancelFn();
+        }
+      });
     } else {
       syncManager.stopLiveSync();
     }
-  }, [settings.couchdb]);
+
+    // Cleanup: cancel all active replications when dependencies change or component unmounts
+    return () => {
+      active = false;
+      syncManager.stopLiveSync();
+    };
+  }, [couchEnabled, couchEndpoint, couchUsername, couchPassword, couchPrefix, couchAutoSync]);
 
   // CouchDB Actions
   const updateCouchDBSettings = async (partial: Partial<CouchDBSettings>) => {
