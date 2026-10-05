@@ -212,21 +212,35 @@ export const db = new RoleFocusPouchDB();
 // CouchDB Helpers & Live Replication Manager
 // -------------------------------------------------------------
 
-function buildRemoteUrl(endpoint: string, dbName: string, auth?: { username?: string; password?: string }): string {
-  let cleanEndpoint = endpoint.trim().replace(/\/+$/, '');
-  
+function buildRemoteUrl(endpoint: string, dbName: string): string {
+  const cleanEndpoint = endpoint.trim().replace(/\/+$/, '');
+  return `${cleanEndpoint}/${dbName}`;
+}
+
+async function ensureRemoteDatabaseExists(
+  endpoint: string,
+  dbName: string,
+  auth?: { username?: string; password?: string }
+): Promise<void> {
+  const cleanEndpoint = endpoint.trim().replace(/\/+$/, '');
+  const url = `${cleanEndpoint}/${dbName}`;
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+  };
   if (auth && auth.username) {
-    try {
-      const urlObj = new URL(cleanEndpoint);
-      urlObj.username = encodeURIComponent(auth.username);
-      urlObj.password = encodeURIComponent(auth.password || '');
-      return `${urlObj.toString().replace(/\/+$/, '')}/${dbName}`;
-    } catch {
-      // If URL parsing fails, fallback
-    }
+    headers['Authorization'] = `Basic ${btoa(`${auth.username}:${auth.password || ''}`)}`;
   }
 
-  return `${cleanEndpoint}/${dbName}`;
+  try {
+    const headRes = await fetch(url, { method: 'HEAD', headers });
+    if (headRes.status === 404) {
+      // Database does not exist yet on server; attempt creation with full credentials
+      await fetch(url, { method: 'PUT', headers });
+    }
+  } catch {
+    // Network or CORS errors will be captured by replication handler
+  }
 }
 
 function createRemoteDb<T extends {} = {}>(
@@ -234,20 +248,33 @@ function createRemoteDb<T extends {} = {}>(
   dbName: string,
   auth?: { username?: string; password?: string }
 ) {
-  const url = buildRemoteUrl(endpoint, dbName, auth);
+  const url = buildRemoteUrl(endpoint, dbName);
   const basicAuthHeader =
     auth && auth.username
       ? `Basic ${btoa(`${auth.username}:${auth.password || ''}`)}`
       : undefined;
 
+  const authHeaders: Record<string, string> = {
+    'X-Requested-With': 'XMLHttpRequest',
+    Accept: 'application/json',
+  };
+  if (basicAuthHeader) {
+    authHeaders['Authorization'] = basicAuthHeader;
+  }
+
   const options: any = {
-    skip_setup: false,
+    skip_setup: true, // Crucial: prevents PouchDB from making unauthenticated automatic PUT requests that trigger browser login popup
+    ajax: {
+      headers: authHeaders,
+      timeout: 30000,
+    },
     fetch: (input: string | Request, init: any = {}) => {
       const headers = new Headers(init.headers || {});
       if (basicAuthHeader) {
         headers.set('Authorization', basicAuthHeader);
       }
       headers.set('X-Requested-With', 'XMLHttpRequest');
+      headers.set('Accept', 'application/json');
       init.headers = headers;
       return fetch(input, init);
     },
@@ -390,6 +417,7 @@ export class CouchDBSyncManager {
 
     try {
       for (const item of collections) {
+        await ensureRemoteDatabaseExists(config.endpoint, item.name, auth);
         const remoteDb = createRemoteDb(config.endpoint, item.name, auth);
         await item.col.getRawDB().sync(remoteDb);
       }
@@ -402,7 +430,7 @@ export class CouchDBSyncManager {
     }
   }
 
-  public startLiveSync(config: CouchDBSettings) {
+  public async startLiveSync(config: CouchDBSettings) {
     this.stopLiveSync();
 
     if (!config.enabled || !config.endpoint || !config.autoSync) {
@@ -423,6 +451,7 @@ export class CouchDBSyncManager {
 
     try {
       for (const item of collections) {
+        await ensureRemoteDatabaseExists(config.endpoint, item.name, auth);
         const remoteDb = createRemoteDb(config.endpoint, item.name, auth);
 
         const sync = item.col.getRawDB().sync(remoteDb, {
