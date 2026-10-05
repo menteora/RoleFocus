@@ -1,6 +1,14 @@
 import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import confetti from 'canvas-confetti';
-import { db, seedInitialDataIfNeeded, exportAllData, importAllData, resetDatabaseToDefault } from '../db/db';
+import {
+  db,
+  seedInitialDataIfNeeded,
+  exportAllData,
+  importAllData,
+  resetDatabaseToDefault,
+  syncManager,
+  testCouchDBConnection,
+} from '../db/db';
 import type {
   Role,
   TimeSlot,
@@ -8,6 +16,8 @@ import type {
   TimerSession,
   ActiveTimerData,
   AppSettings,
+  CouchDBSettings,
+  CouchDBSyncState,
   ActiveTab,
   ExportDataPayload,
   DecisionMode,
@@ -46,6 +56,13 @@ interface AppContextType {
   activeRolesInfo: ActiveRoleInfo[];
   selectedFocusRoleId: string | null;
   setSelectedFocusRoleId: (roleId: string | null) => void;
+
+  // CouchDB Sync
+  couchDBSyncState: CouchDBSyncState;
+  couchDBSyncError?: string;
+  updateCouchDBSettings: (couchSettings: Partial<CouchDBSettings>) => Promise<void>;
+  testCouchDB: (customConfig?: CouchDBSettings) => Promise<{ success: boolean; message: string; version?: string }>;
+  syncCouchDBNow: () => Promise<{ success: boolean; message: string }>;
 
   // Active Timer
   activeTimer: ActiveTimerData | null;
@@ -110,7 +127,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [selectedFocusRoleId, setSelectedFocusRoleId] = useState<string | null>(null);
   const [selectedDecisions, setSelectedDecisions] = useState<Record<string, DecisionMode>>({});
 
-  // PouchDB State
+  // CouchDB Sync State
+  const [couchDBSyncState, setCouchDBSyncState] = useState<CouchDBSyncState>('disconnected');
+  const [couchDBSyncError, setCouchDBSyncError] = useState<string | undefined>(undefined);
+
+  // PouchDB Data State
   const [roles, setRoles] = useState<Role[]>([]);
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [tasks, setTasks] = useState<RoleTask[]>([]);
@@ -167,6 +188,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const unsubActiveTimer = db.activeTimer.subscribe(refreshAllData);
     const unsubSettings = db.settings.subscribe(refreshAllData);
 
+    const unsubSync = syncManager.subscribeState((state, err) => {
+      if (!unmounted) {
+        setCouchDBSyncState(state);
+        setCouchDBSyncError(err);
+      }
+    });
+
     return () => {
       unmounted = true;
       unsubRoles();
@@ -175,6 +203,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubSessions();
       unsubActiveTimer();
       unsubSettings();
+      unsubSync();
     };
   }, [refreshAllData]);
 
@@ -188,11 +217,73 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         defaultTimerMinutes: 25,
         timeSimulationEnabled: false,
         simulatedTimeMinutes: null,
+        couchdb: {
+          enabled: false,
+          endpoint: '',
+          username: '',
+          password: '',
+          databasePrefix: 'rolefocus_',
+          autoSync: true,
+        },
       }
     );
   }, [settingsRecord]);
 
-  // Real-time clock update (every 10 seconds is sufficient for schedule updates)
+  // Handle CouchDB Live Sync initialization on settings change
+  useEffect(() => {
+    if (settings.couchdb && settings.couchdb.enabled && settings.couchdb.endpoint) {
+      if (settings.couchdb.autoSync) {
+        syncManager.startLiveSync(settings.couchdb);
+      } else {
+        syncManager.stopLiveSync();
+      }
+    } else {
+      syncManager.stopLiveSync();
+    }
+  }, [settings.couchdb]);
+
+  // CouchDB Actions
+  const updateCouchDBSettings = async (partial: Partial<CouchDBSettings>) => {
+    const currentCouch = settings.couchdb || {
+      enabled: false,
+      endpoint: '',
+      username: '',
+      password: '',
+      databasePrefix: 'rolefocus_',
+      autoSync: true,
+    };
+    const updatedCouch = { ...currentCouch, ...partial };
+    await updateSettings({ couchdb: updatedCouch });
+  };
+
+  const testCouchDB = async (customConfig?: CouchDBSettings) => {
+    const configToTest = customConfig || settings.couchdb || {
+      enabled: false,
+      endpoint: '',
+      username: '',
+      password: '',
+      databasePrefix: 'rolefocus_',
+      autoSync: true,
+    };
+    return await testCouchDBConnection(configToTest);
+  };
+
+  const syncCouchDBNow = async () => {
+    const config = settings.couchdb;
+    if (!config || !config.endpoint) {
+      return { success: false, message: 'Configura prima l\'endpoint del server CouchDB.' };
+    }
+    const res = await syncManager.syncOnce(config);
+    if (res.success) {
+      await updateCouchDBSettings({ lastSyncTimestamp: Date.now(), lastError: undefined });
+      await refreshAllData();
+    } else {
+      await updateCouchDBSettings({ lastError: res.message });
+    }
+    return res;
+  };
+
+  // Real-time clock update
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
@@ -206,7 +297,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const realMinutesFromMidnight = currentTime.getHours() * 60 + currentTime.getMinutes();
   const effectiveMinutes = isSimulatingTime && simulatedMinutes !== null ? simulatedMinutes : realMinutesFromMidnight;
-  const effectiveDayOfWeek = currentTime.getDay(); // 0 is Sunday, 1 is Monday...
+  const effectiveDayOfWeek = currentTime.getDay();
 
   // Theme synchronization with DOM and localStorage
   const theme = settings.theme || 'system';
@@ -231,11 +322,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .sort((a, b) => a.priority - b.priority);
   }, [roles]);
 
-  // Active roles calculation for the current effective time with 3 decision categories
+  // Active roles calculation
   const activeRolesInfo: ActiveRoleInfo[] = useMemo(() => {
     return sortedRoles
       .map((role) => {
-        // If role has day of week restriction, check if active today
         if (role.daysOfWeek && role.daysOfWeek.length > 0 && !role.daysOfWeek.includes(effectiveDayOfWeek)) {
           return {
             role,
@@ -259,7 +349,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           unblocker: roleTasks.filter((t) => t.category === 'unblocker'),
         };
 
-        // Decision mode preference (stored in state or priority task category)
         const chosenCategory = selectedDecisions[role.id] || 'important';
         const categoryTasks = tasksByCategory[chosenCategory] || [];
         const activeTask =
@@ -279,7 +368,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .filter((info) => info.activeSlots.length > 0);
   }, [sortedRoles, timeSlots, tasks, effectiveMinutes, effectiveDayOfWeek, selectedDecisions]);
 
-  // If no selected focus role, or if current focus role became inactive, pick the first active role
+  // Selection auto-fallback
   useEffect(() => {
     if (activeRolesInfo.length > 0) {
       const exists = activeRolesInfo.some((info) => info.role.id === selectedFocusRoleId);
@@ -291,12 +380,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [activeRolesInfo, selectedFocusRoleId, sortedRoles]);
 
-  // Set decision mode for a role
   const setRoleDecisionMode = useCallback((roleId: string, mode: DecisionMode) => {
     setSelectedDecisions((prev) => ({ ...prev, [roleId]: mode }));
   }, []);
 
-  // Active Timer engine: survives reloads and accurately tracks time via targetEndTimestamp
   const activeTimer = activeTimerRecord || null;
 
   const triggerCelebration = useCallback(() => {
@@ -312,7 +399,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Helper to record a completed session and update task stats
   const recordSessionAndAccumulateTaskTime = async (
     roleId: string,
     roleName: string,
@@ -339,7 +425,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     await db.timerSessions.add(session);
 
-    // Accumulate time on task
     if (taskId) {
       const task = await db.tasks.get(taskId);
       if (task) {
@@ -363,7 +448,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Timer Tick Engine: updates remainingSeconds based on targetEndTimestamp
   useEffect(() => {
     if (!activeTimer || activeTimer.status !== 'running' || !activeTimer.targetEndTimestamp) {
       return;
@@ -374,7 +458,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const remaining = Math.max(0, Math.round((activeTimer.targetEndTimestamp! - now) / 1000));
 
       if (remaining <= 0) {
-        // Timer completed!
         clearInterval(interval);
 
         if (settings.soundEnabled) {
@@ -405,7 +488,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           activeTimer.taskId
         );
 
-        // Update timer record
         await db.activeTimer.put({
           ...activeTimer,
           remainingSeconds: 0,
@@ -413,7 +495,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           targetEndTimestamp: null,
         });
       } else {
-        // Update remaining seconds in memory / DB periodically
         if (Math.abs(activeTimer.remainingSeconds - remaining) >= 1) {
           await db.activeTimer.update('current_timer', {
             remainingSeconds: remaining,
@@ -425,7 +506,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   }, [activeTimer, settings.soundEnabled, settings.notificationEnabled, triggerCelebration]);
 
-  // Timer Actions
   const startTimerForRole = async (
     role: Role,
     taskText?: string,
@@ -612,7 +692,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await db.timeSlots.delete(slotId);
   };
 
-  // Task Operations with 3 Decision Modes
+  // Task Operations
   const addOrUpdateTask = async (taskData: {
     id?: string;
     roleId: string;
@@ -743,6 +823,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         activeRolesInfo,
         selectedFocusRoleId,
         setSelectedFocusRoleId,
+        couchDBSyncState,
+        couchDBSyncError,
+        updateCouchDBSettings,
+        testCouchDB,
+        syncCouchDBNow,
         activeTimer,
         startTimerForRole,
         pauseTimer,

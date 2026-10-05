@@ -6,6 +6,8 @@ import type {
   TimerSession,
   ActiveTimerData,
   AppSettings,
+  CouchDBSettings,
+  CouchDBSyncState,
   ExportDataPayload,
   DecisionMode,
 } from '../types';
@@ -22,7 +24,7 @@ interface PouchDoc<T> {
   data: T;
 }
 
-class PouchCollection<T extends { id: string }> {
+export class PouchCollection<T extends { id: string }> {
   private pdb: PouchDB.Database<PouchDoc<T>>;
   private listeners: Set<Listener> = new Set();
 
@@ -36,6 +38,10 @@ class PouchCollection<T extends { id: string }> {
       .on('error', (err) => {
         console.error(`PouchDB error on collection ${name}:`, err);
       });
+  }
+
+  public getRawDB(): PouchDB.Database<PouchDoc<T>> {
+    return this.pdb;
   }
 
   public subscribe(listener: Listener): () => void {
@@ -202,6 +208,207 @@ export class RoleFocusPouchDB {
 
 export const db = new RoleFocusPouchDB();
 
+// -------------------------------------------------------------
+// CouchDB Helpers & Live Replication Manager
+// -------------------------------------------------------------
+
+function getRemoteDbUrl(endpoint: string, dbName: string): string {
+  const cleanEndpoint = endpoint.trim().replace(/\/+$/, '');
+  return `${cleanEndpoint}/${dbName}`;
+}
+
+function createRemoteDb<T extends {} = {}>(url: string, auth?: { username?: string; password?: string }) {
+  const options: any = { skip_setup: false };
+  if (auth && auth.username) {
+    options.auth = {
+      username: auth.username,
+      password: auth.password || '',
+    };
+  }
+  return new PouchDB<T>(url, options);
+}
+
+export async function testCouchDBConnection(
+  config: CouchDBSettings
+): Promise<{ success: boolean; message: string; version?: string }> {
+  if (!config.endpoint || !config.endpoint.trim()) {
+    return { success: false, message: 'Endpoint URL obbligatorio (es. http://localhost:5984)' };
+  }
+
+  const cleanEndpoint = config.endpoint.trim().replace(/\/+$/, '');
+
+  try {
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+    };
+    if (config.username) {
+      const authStr = btoa(`${config.username}:${config.password || ''}`);
+      headers['Authorization'] = `Basic ${authStr}`;
+    }
+
+    const res = await fetch(cleanEndpoint, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        return { success: false, message: 'Credenziali errate (401/403: Accesso Negato)' };
+      }
+      return { success: false, message: `Errore server CouchDB: HTTP ${res.status} ${res.statusText}` };
+    }
+
+    const data = await res.json();
+    if (data.couchdb === 'Welcome' || data.version) {
+      return {
+        success: true,
+        message: `Connessione riuscita a CouchDB! Versione: ${data.version || 'OK'}`,
+        version: data.version,
+      };
+    }
+
+    return {
+      success: true,
+      message: 'Server risponde correttamente.',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Impossibile raggiungere il server CouchDB: ${err.message || 'Errore di rete o CORS'}`,
+    };
+  }
+}
+
+export class CouchDBSyncManager {
+  private activeSyncs: any[] = [];
+  private syncState: CouchDBSyncState = 'disconnected';
+  private lastError?: string;
+  private stateListeners: Set<(state: CouchDBSyncState, err?: string) => void> = new Set();
+
+  public subscribeState(listener: (state: CouchDBSyncState, err?: string) => void) {
+    this.stateListeners.add(listener);
+    listener(this.syncState, this.lastError);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  private notifyState(state: CouchDBSyncState, err?: string) {
+    this.syncState = state;
+    this.lastError = err;
+    for (const l of this.stateListeners) {
+      try {
+        l(state, err);
+      } catch (e) {
+        console.error('Sync listener error:', e);
+      }
+    }
+  }
+
+  public getState() {
+    return { state: this.syncState, error: this.lastError };
+  }
+
+  public stopLiveSync() {
+    for (const s of this.activeSyncs) {
+      try {
+        s.cancel();
+      } catch {
+        // ignore
+      }
+    }
+    this.activeSyncs = [];
+    this.notifyState('disconnected');
+  }
+
+  public async syncOnce(config: CouchDBSettings): Promise<{ success: boolean; message: string }> {
+    if (!config.enabled || !config.endpoint) {
+      return { success: false, message: 'CouchDB non configurato o disabilitato' };
+    }
+
+    this.notifyState('syncing');
+    const prefix = config.databasePrefix?.trim() || 'rolefocus_';
+    const auth = config.username ? { username: config.username, password: config.password } : undefined;
+
+    const collections = [
+      { name: `${prefix}roles`, col: db.roles },
+      { name: `${prefix}slots`, col: db.timeSlots },
+      { name: `${prefix}tasks`, col: db.tasks },
+      { name: `${prefix}sessions`, col: db.timerSessions },
+      { name: `${prefix}settings`, col: db.settings },
+    ];
+
+    try {
+      for (const item of collections) {
+        const remoteUrl = getRemoteDbUrl(config.endpoint, item.name);
+        const remoteDb = createRemoteDb(remoteUrl, auth);
+        await item.col.getRawDB().sync(remoteDb);
+      }
+      this.notifyState('connected');
+      return { success: true, message: 'Sincronizzazione completata con successo.' };
+    } catch (err: any) {
+      const errMsg = err.message || 'Errore durante la sincronizzazione';
+      this.notifyState('error', errMsg);
+      return { success: false, message: errMsg };
+    }
+  }
+
+  public startLiveSync(config: CouchDBSettings) {
+    this.stopLiveSync();
+
+    if (!config.enabled || !config.endpoint || !config.autoSync) {
+      return;
+    }
+
+    this.notifyState('connecting');
+    const prefix = config.databasePrefix?.trim() || 'rolefocus_';
+    const auth = config.username ? { username: config.username, password: config.password } : undefined;
+
+    const collections = [
+      { name: `${prefix}roles`, col: db.roles },
+      { name: `${prefix}slots`, col: db.timeSlots },
+      { name: `${prefix}tasks`, col: db.tasks },
+      { name: `${prefix}sessions`, col: db.timerSessions },
+      { name: `${prefix}settings`, col: db.settings },
+    ];
+
+    try {
+      for (const item of collections) {
+        const remoteUrl = getRemoteDbUrl(config.endpoint, item.name);
+        const remoteDb = createRemoteDb(remoteUrl, auth);
+
+        const sync = item.col.getRawDB().sync(remoteDb, {
+          live: true,
+          retry: true,
+        });
+
+        sync
+          .on('change', () => {
+            this.notifyState('syncing');
+            setTimeout(() => this.notifyState('connected'), 1000);
+          })
+          .on('paused', (info: any) => {
+            if (info) {
+              this.notifyState('connected');
+            }
+          })
+          .on('active', () => {
+            this.notifyState('syncing');
+          })
+          .on('error', (err: any) => {
+            console.error(`Sync error on ${item.name}:`, err);
+            this.notifyState('error', err.message || 'Errore di sincronizzazione CouchDB');
+          });
+
+        this.activeSyncs.push(sync);
+      }
+      this.notifyState('connected');
+    } catch (err: any) {
+      this.notifyState('error', err.message || 'Errore di avvio sincronizzazione');
+    }
+  }
+}
+
+export const syncManager = new CouchDBSyncManager();
+
 // Initialize basic settings and active timer structures without injecting hardcoded roles
 export async function seedInitialDataIfNeeded(): Promise<void> {
   const existingSettings = await db.settings.get('current_settings');
@@ -215,6 +422,14 @@ export async function seedInitialDataIfNeeded(): Promise<void> {
     defaultTimerMinutes: 25,
     timeSimulationEnabled: false,
     simulatedTimeMinutes: null,
+    couchdb: {
+      enabled: false,
+      endpoint: '',
+      username: '',
+      password: '',
+      databasePrefix: 'rolefocus_',
+      autoSync: true,
+    },
   };
 
   const initialActiveTimer: ActiveTimerData = {

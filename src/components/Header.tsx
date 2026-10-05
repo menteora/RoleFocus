@@ -7,8 +7,9 @@ import {
   History,
   Sun,
   Moon,
-  DownloadCloud,
-  Timer,
+  Server,
+  RefreshCw,
+  AlertCircle,
   Sparkles,
 } from 'lucide-react';
 import type { ActiveTab } from '../types';
@@ -30,6 +31,8 @@ export const Header: React.FC<HeaderProps> = ({
     isSimulatingTime,
     activeTimer,
     activeRolesInfo,
+    settings,
+    couchDBSyncState,
   } = useApp();
 
   const navItems: { id: ActiveTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -40,6 +43,7 @@ export const Header: React.FC<HeaderProps> = ({
   ];
 
   const hasRunningTimer = activeTimer && (activeTimer.status === 'running' || activeTimer.status === 'paused');
+  const isCouchEnabled = Boolean(settings.couchdb?.enabled && settings.couchdb?.endpoint);
 
   return (
     <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 transition-colors">
@@ -93,6 +97,44 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Zone 3: Action Buttons */}
           <div className="flex items-center gap-2">
+            {/* CouchDB Sync Status Indicator & Config Launcher */}
+            <button
+              onClick={onOpenImportExport}
+              title={
+                isCouchEnabled
+                  ? `CouchDB Sync: ${couchDBSyncState} (clicca per configurare)`
+                  : 'Configura server CouchDB e Backup'
+              }
+              className={`px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5 ${
+                isCouchEnabled && couchDBSyncState === 'connected'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                  : isCouchEnabled && couchDBSyncState === 'syncing'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-800'
+                  : isCouchEnabled && couchDBSyncState === 'error'
+                  ? 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border-red-300 dark:border-red-800'
+                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60'
+              }`}
+            >
+              {isCouchEnabled && couchDBSyncState === 'syncing' ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500" />
+              ) : isCouchEnabled && couchDBSyncState === 'error' ? (
+                <AlertCircle className="w-3.5 h-3.5 text-red-500" />
+              ) : (
+                <Server className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">
+                {isCouchEnabled
+                  ? couchDBSyncState === 'connected'
+                    ? 'CouchDB'
+                    : couchDBSyncState === 'syncing'
+                    ? 'Sync...'
+                    : couchDBSyncState === 'error'
+                    ? 'Sync Error'
+                    : 'CouchDB'
+                  : 'CouchDB / Dati'}
+              </span>
+            </button>
+
             {/* Time Simulation toggle button */}
             <button
               onClick={onToggleTimeSimulation}
@@ -107,15 +149,6 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="hidden sm:inline">
                 {isSimulatingTime ? 'Simulazione' : 'Simula Ora'}
               </span>
-            </button>
-
-            {/* Import/Export Backup button */}
-            <button
-              onClick={onOpenImportExport}
-              title="Importa / Esporta Backup IndexedDB"
-              className="p-2 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
-            >
-              <DownloadCloud className="w-4 h-4" />
             </button>
 
             {/* Theme Toggle */}

@@ -115,6 +115,19 @@ export interface ActiveTimerData {
   pausedAtTimestamp: number | null;
 }
 
+export type CouchDBSyncState = 'disconnected' | 'connecting' | 'connected' | 'syncing' | 'error';
+
+export interface CouchDBSettings {
+  enabled: boolean;
+  endpoint: string; // e.g. "http://localhost:5984" or "https://couchdb.example.com"
+  username?: string;
+  password?: string;
+  databasePrefix?: string; // e.g. "rolefocus_"
+  autoSync: boolean;
+  lastSyncTimestamp?: number;
+  lastError?: string;
+}
+
 export interface AppSettings {
   id: string; // 'current_settings'
   theme: 'light' | 'dark' | 'system';
@@ -123,6 +136,7 @@ export interface AppSettings {
   defaultTimerMinutes: number;
   timeSimulationEnabled: boolean;
   simulatedTimeMinutes: number | null; // Minutes from 00:00 (0 to 1439)
+  couchdb?: CouchDBSettings;
 }
 
 export interface ExportDataPayload {
