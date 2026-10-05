@@ -412,6 +412,7 @@ export class CouchDBSyncManager {
       { name: `${prefix}slots`, col: db.timeSlots },
       { name: `${prefix}tasks`, col: db.tasks },
       { name: `${prefix}sessions`, col: db.timerSessions },
+      { name: `${prefix}timer`, col: db.activeTimer },
       { name: `${prefix}settings`, col: db.settings },
     ];
 
@@ -449,6 +450,7 @@ export class CouchDBSyncManager {
       { name: `${prefix}slots`, col: db.timeSlots },
       { name: `${prefix}tasks`, col: db.tasks },
       { name: `${prefix}sessions`, col: db.timerSessions },
+      { name: `${prefix}timer`, col: db.activeTimer },
       { name: `${prefix}settings`, col: db.settings },
     ];
 

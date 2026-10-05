@@ -409,7 +409,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSelectedDecisions((prev) => ({ ...prev, [roleId]: mode }));
   }, []);
 
-  const activeTimer = activeTimerRecord || null;
+  // Local in-memory clock tick for timer countdown without hammering PouchDB/CouchDB
+  const [timerNow, setTimerNow] = useState<number>(Date.now());
+
+  useEffect(() => {
+    if (activeTimerRecord?.status === 'running' && activeTimerRecord.targetEndTimestamp) {
+      const interval = setInterval(() => {
+        setTimerNow(Date.now());
+      }, 250);
+      return () => clearInterval(interval);
+    }
+  }, [activeTimerRecord?.status, activeTimerRecord?.targetEndTimestamp]);
+
+  // Compute live activeTimer object dynamically
+  const activeTimer: ActiveTimerData | null = useMemo(() => {
+    if (!activeTimerRecord) return null;
+
+    if (activeTimerRecord.status === 'running' && activeTimerRecord.targetEndTimestamp) {
+      const calculatedRemaining = Math.max(0, Math.round((activeTimerRecord.targetEndTimestamp - timerNow) / 1000));
+      return {
+        ...activeTimerRecord,
+        remainingSeconds: calculatedRemaining,
+      };
+    }
+
+    return activeTimerRecord;
+  }, [activeTimerRecord, timerNow]);
 
   const triggerCelebration = useCallback(() => {
     try {
@@ -473,63 +498,52 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Timer Completion watcher
   useEffect(() => {
-    if (!activeTimer || activeTimer.status !== 'running' || !activeTimer.targetEndTimestamp) {
+    if (!activeTimerRecord || activeTimerRecord.status !== 'running' || !activeTimerRecord.targetEndTimestamp) {
       return;
     }
 
-    const interval = setInterval(async () => {
-      const now = Date.now();
-      const remaining = Math.max(0, Math.round((activeTimer.targetEndTimestamp! - now) / 1000));
+    const now = Date.now();
+    const remaining = Math.max(0, Math.round((activeTimerRecord.targetEndTimestamp - now) / 1000));
 
-      if (remaining <= 0) {
-        clearInterval(interval);
-
-        if (settings.soundEnabled) {
-          playCompletionChime();
-        }
-        triggerCelebration();
-
-        if (settings.notificationEnabled) {
-          sendTimerNotification(
-            `Sessione completata: ${activeTimer.roleName}`,
-            activeTimer.taskText
-              ? `Hai completato: "${activeTimer.taskText}"`
-              : `Hai terminato la sessione di ${Math.round(activeTimer.totalDurationSeconds / 60)} min.`
-          );
-        }
-
-        const durationMinutes = Math.round(activeTimer.totalDurationSeconds / 60);
-        const startedAt = activeTimer.startedAt || Date.now() - activeTimer.totalDurationSeconds * 1000;
-
-        await recordSessionAndAccumulateTaskTime(
-          activeTimer.roleId || 'unassigned',
-          activeTimer.roleName,
-          activeTimer.roleColor,
-          activeTimer.taskText,
-          activeTimer.category || 'important',
-          durationMinutes,
-          startedAt,
-          activeTimer.taskId
-        );
-
-        await db.activeTimer.put({
-          ...activeTimer,
-          remainingSeconds: 0,
-          status: 'completed',
-          targetEndTimestamp: null,
-        });
-      } else {
-        if (Math.abs(activeTimer.remainingSeconds - remaining) >= 1) {
-          await db.activeTimer.update('current_timer', {
-            remainingSeconds: remaining,
-          });
-        }
+    if (remaining <= 0) {
+      if (settings.soundEnabled) {
+        playCompletionChime();
       }
-    }, 500);
+      triggerCelebration();
 
-    return () => clearInterval(interval);
-  }, [activeTimer, settings.soundEnabled, settings.notificationEnabled, triggerCelebration]);
+      if (settings.notificationEnabled) {
+        sendTimerNotification(
+          `Sessione completata: ${activeTimerRecord.roleName}`,
+          activeTimerRecord.taskText
+            ? `Hai completato: "${activeTimerRecord.taskText}"`
+            : `Hai terminato la sessione di ${Math.round(activeTimerRecord.totalDurationSeconds / 60)} min.`
+        );
+      }
+
+      const durationMinutes = Math.round(activeTimerRecord.totalDurationSeconds / 60);
+      const startedAt = activeTimerRecord.startedAt || Date.now() - activeTimerRecord.totalDurationSeconds * 1000;
+
+      recordSessionAndAccumulateTaskTime(
+        activeTimerRecord.roleId || 'unassigned',
+        activeTimerRecord.roleName,
+        activeTimerRecord.roleColor,
+        activeTimerRecord.taskText,
+        activeTimerRecord.category || 'important',
+        durationMinutes,
+        startedAt,
+        activeTimerRecord.taskId
+      );
+
+      db.activeTimer.put({
+        ...activeTimerRecord,
+        remainingSeconds: 0,
+        status: 'completed',
+        targetEndTimestamp: null,
+      });
+    }
+  }, [timerNow, activeTimerRecord, settings.soundEnabled, settings.notificationEnabled, triggerCelebration]);
 
   const startTimerForRole = async (
     role: Role,
