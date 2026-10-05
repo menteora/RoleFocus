@@ -212,19 +212,54 @@ export const db = new RoleFocusPouchDB();
 // CouchDB Helpers & Live Replication Manager
 // -------------------------------------------------------------
 
-function getRemoteDbUrl(endpoint: string, dbName: string): string {
-  const cleanEndpoint = endpoint.trim().replace(/\/+$/, '');
+function buildRemoteUrl(endpoint: string, dbName: string, auth?: { username?: string; password?: string }): string {
+  let cleanEndpoint = endpoint.trim().replace(/\/+$/, '');
+  
+  if (auth && auth.username) {
+    try {
+      const urlObj = new URL(cleanEndpoint);
+      urlObj.username = encodeURIComponent(auth.username);
+      urlObj.password = encodeURIComponent(auth.password || '');
+      return `${urlObj.toString().replace(/\/+$/, '')}/${dbName}`;
+    } catch {
+      // If URL parsing fails, fallback
+    }
+  }
+
   return `${cleanEndpoint}/${dbName}`;
 }
 
-function createRemoteDb<T extends {} = {}>(url: string, auth?: { username?: string; password?: string }) {
-  const options: any = { skip_setup: false };
+function createRemoteDb<T extends {} = {}>(
+  endpoint: string,
+  dbName: string,
+  auth?: { username?: string; password?: string }
+) {
+  const url = buildRemoteUrl(endpoint, dbName, auth);
+  const basicAuthHeader =
+    auth && auth.username
+      ? `Basic ${btoa(`${auth.username}:${auth.password || ''}`)}`
+      : undefined;
+
+  const options: any = {
+    skip_setup: false,
+    fetch: (input: string | Request, init: any = {}) => {
+      const headers = new Headers(init.headers || {});
+      if (basicAuthHeader) {
+        headers.set('Authorization', basicAuthHeader);
+      }
+      headers.set('X-Requested-With', 'XMLHttpRequest');
+      init.headers = headers;
+      return fetch(input, init);
+    },
+  };
+
   if (auth && auth.username) {
     options.auth = {
       username: auth.username,
       password: auth.password || '',
     };
   }
+
   return new PouchDB<T>(url, options);
 }
 
@@ -240,6 +275,7 @@ export async function testCouchDBConnection(
   try {
     const headers: Record<string, string> = {
       Accept: 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
     };
     if (config.username) {
       const authStr = btoa(`${config.username}:${config.password || ''}`);
@@ -259,22 +295,38 @@ export async function testCouchDBConnection(
     }
 
     const data = await res.json();
-    if (data.couchdb === 'Welcome' || data.version) {
-      return {
-        success: true,
-        message: `Connessione riuscita a CouchDB! Versione: ${data.version || 'OK'}`,
-        version: data.version,
-      };
+    
+    // Check session info if username provided
+    if (config.username) {
+      try {
+        const sessionRes = await fetch(`${cleanEndpoint}/_session`, {
+          method: 'GET',
+          headers,
+        });
+        if (sessionRes.ok) {
+          const sessionData = await sessionRes.json();
+          if (sessionData.userCtx && sessionData.userCtx.name) {
+            return {
+              success: true,
+              message: `Autenticato come "${sessionData.userCtx.name}". Server CouchDB v${data.version || 'OK'} pronto.`,
+              version: data.version,
+            };
+          }
+        }
+      } catch {
+        // Fallback to basic OK
+      }
     }
 
     return {
       success: true,
-      message: 'Server risponde correttamente.',
+      message: `Connessione riuscita a CouchDB! Versione: ${data.version || 'OK'}`,
+      version: data.version,
     };
   } catch (err: any) {
     return {
       success: false,
-      message: `Impossibile raggiungere il server CouchDB: ${err.message || 'Errore di rete o CORS'}`,
+      message: `Impossibile raggiungere il server CouchDB: ${err.message || 'Errore di rete o CORS'}. Assicurati che il CORS sia abilitato su CouchDB.`,
     };
   }
 }
@@ -338,8 +390,7 @@ export class CouchDBSyncManager {
 
     try {
       for (const item of collections) {
-        const remoteUrl = getRemoteDbUrl(config.endpoint, item.name);
-        const remoteDb = createRemoteDb(remoteUrl, auth);
+        const remoteDb = createRemoteDb(config.endpoint, item.name, auth);
         await item.col.getRawDB().sync(remoteDb);
       }
       this.notifyState('connected');
@@ -372,8 +423,7 @@ export class CouchDBSyncManager {
 
     try {
       for (const item of collections) {
-        const remoteUrl = getRemoteDbUrl(config.endpoint, item.name);
-        const remoteDb = createRemoteDb(remoteUrl, auth);
+        const remoteDb = createRemoteDb(config.endpoint, item.name, auth);
 
         const sync = item.col.getRawDB().sync(remoteDb, {
           live: true,
