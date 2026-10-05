@@ -1,0 +1,6 @@
+{
+  "name": "RoleFocus - Ruoli e Fasce Orarie",
+  "description": "Organizza i tuoi ruoli per fasce orarie, identifica la cosa più importante da fare adesso e avvia il timer di concentrazione persistente.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
