@@ -30,9 +30,10 @@ export const NowPage: React.FC = () => {
     role: Role,
     taskText: string,
     durationMinutes: number,
-    category: DecisionMode
+    category: DecisionMode,
+    taskId?: string
   ) => {
-    await startTimerForRole(role, taskText, durationMinutes, category);
+    await startTimerForRole(role, taskText, durationMinutes, category, taskId);
   };
 
   // Find next upcoming role if no roles are active right now

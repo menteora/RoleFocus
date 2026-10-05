@@ -1,11 +1,11 @@
-export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0 = Domenica, 1 = Lunedì ... 6 = Sabato
+export type ActiveTab = 'now' | 'timeline' | 'config' | 'history' | 'settings';
 
 export type DecisionMode = 'important' | 'quick' | 'unblocker';
 
 export interface DecisionModeConfig {
   key: DecisionMode;
-  conditionLabel: string; // "Hai energia", "Hai poca energia", "Hai molte dipendenze"
-  actionLabel: string;    // "Più importante", "Più veloce", "Quella che sblocca le altre"
+  conditionLabel: string;
+  actionLabel: string;
   subtitle: string;
   iconName: string;
   defaultMinutes: number;
@@ -18,7 +18,7 @@ export const DECISION_MODES: DecisionModeConfig[] = [
     key: 'important',
     conditionLabel: 'Hai energia',
     actionLabel: 'Più importante',
-    subtitle: 'Massimo impatto e valore, richiede concentrazione piena',
+    subtitle: 'Focus profondo su attività ad alto impatto e valore cognitivo',
     iconName: 'Zap',
     defaultMinutes: 45,
     badgeColorClass: 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800',
@@ -78,6 +78,8 @@ export interface RoleTask {
   completed: boolean;
   isCurrentPriority: boolean;
   estimatedMinutes?: number;
+  totalMinutesSpent?: number; // Accumulated minutes spent in focus sessions
+  sessionCount?: number;      // Number of sessions completed on this task
   createdAt: number;
   completedAt?: number;
 }
@@ -87,6 +89,7 @@ export interface TimerSession {
   roleId: string;
   roleName: string;
   roleColor?: string;
+  taskId?: string; // Linked task ID if session was for a specific task
   taskText: string;
   category?: DecisionMode;
   durationMinutes: number;
@@ -101,6 +104,7 @@ export interface ActiveTimerData {
   roleId: string | null;
   roleName: string;
   roleColor: string;
+  taskId?: string | null;
   taskText: string;
   category?: DecisionMode;
   totalDurationSeconds: number;
@@ -118,7 +122,7 @@ export interface AppSettings {
   notificationEnabled: boolean;
   defaultTimerMinutes: number;
   timeSimulationEnabled: boolean;
-  simulatedTimeMinutes: number | null;
+  simulatedTimeMinutes: number | null; // Minutes from 00:00 (0 to 1439)
 }
 
 export interface ExportDataPayload {
@@ -128,7 +132,5 @@ export interface ExportDataPayload {
   timeSlots: TimeSlot[];
   tasks: RoleTask[];
   timerSessions: TimerSession[];
-  settings: AppSettings;
+  settings?: AppSettings;
 }
-
-export type ActiveTab = 'now' | 'timeline' | 'config' | 'history';

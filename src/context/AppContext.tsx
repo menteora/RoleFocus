@@ -50,7 +50,13 @@ interface AppContextType {
 
   // Active Timer
   activeTimer: ActiveTimerData | null;
-  startTimerForRole: (role: Role, taskText?: string, customMinutes?: number, category?: DecisionMode) => Promise<void>;
+  startTimerForRole: (
+    role: Role,
+    taskText?: string,
+    customMinutes?: number,
+    category?: DecisionMode,
+    taskId?: string
+  ) => Promise<void>;
   pauseTimer: () => Promise<void>;
   resumeTimer: () => Promise<void>;
   stopTimer: (recordCompleted?: boolean) => Promise<void>;
@@ -262,6 +268,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Helper to record a completed session and update task stats
+  const recordSessionAndAccumulateTaskTime = async (
+    roleId: string,
+    roleName: string,
+    roleColor: string,
+    taskText: string,
+    category: DecisionMode,
+    durationMinutes: number,
+    startedAt: number,
+    taskId?: string | null
+  ) => {
+    const session: TimerSession = {
+      id: `session-${Date.now()}`,
+      roleId,
+      roleName,
+      roleColor,
+      taskId: taskId || undefined,
+      taskText: taskText || 'Sessione Focus',
+      category: category || 'important',
+      durationMinutes,
+      startedAt,
+      endedAt: Date.now(),
+      completed: true,
+    };
+
+    await db.timerSessions.add(session);
+
+    // Accumulate time on task
+    if (taskId) {
+      const task = await db.tasks.get(taskId);
+      if (task) {
+        await db.tasks.update(taskId, {
+          totalMinutesSpent: (task.totalMinutesSpent || 0) + durationMinutes,
+          sessionCount: (task.sessionCount || 0) + 1,
+        });
+      }
+    } else if (taskText && roleId) {
+      const matchedTask = await db.tasks
+        .where('roleId')
+        .equals(roleId)
+        .filter((t) => t.text.trim().toLowerCase() === taskText.trim().toLowerCase())
+        .first();
+
+      if (matchedTask) {
+        await db.tasks.update(matchedTask.id, {
+          totalMinutesSpent: (matchedTask.totalMinutesSpent || 0) + durationMinutes,
+          sessionCount: (matchedTask.sessionCount || 0) + 1,
+        });
+      }
+    }
+  };
+
   // Timer Tick Engine: updates remainingSeconds based on targetEndTimestamp
   useEffect(() => {
     if (!activeTimer || activeTimer.status !== 'running' || !activeTimer.targetEndTimestamp) {
@@ -290,21 +348,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           );
         }
 
-        // Record completed session in history
-        const session: TimerSession = {
-          id: `session-${Date.now()}`,
-          roleId: activeTimer.roleId || 'unassigned',
-          roleName: activeTimer.roleName,
-          roleColor: activeTimer.roleColor,
-          taskText: activeTimer.taskText || 'Sessione Focus',
-          category: activeTimer.category || 'important',
-          durationMinutes: Math.round(activeTimer.totalDurationSeconds / 60),
-          startedAt: activeTimer.startedAt || Date.now() - activeTimer.totalDurationSeconds * 1000,
-          endedAt: Date.now(),
-          completed: true,
-        };
+        const durationMinutes = Math.round(activeTimer.totalDurationSeconds / 60);
+        const startedAt = activeTimer.startedAt || Date.now() - activeTimer.totalDurationSeconds * 1000;
 
-        await db.timerSessions.add(session);
+        await recordSessionAndAccumulateTaskTime(
+          activeTimer.roleId || 'unassigned',
+          activeTimer.roleName,
+          activeTimer.roleColor,
+          activeTimer.taskText,
+          activeTimer.category || 'important',
+          durationMinutes,
+          startedAt,
+          activeTimer.taskId
+        );
 
         // Update timer record
         await db.activeTimer.put({
@@ -331,7 +387,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     role: Role,
     taskText?: string,
     customMinutes?: number,
-    category: DecisionMode = 'important'
+    category: DecisionMode = 'important',
+    taskId?: string
   ) => {
     playButtonTick();
     const durationMins = customMinutes || role.defaultDurationMinutes || settings.defaultTimerMinutes || 25;
@@ -344,6 +401,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       roleId: role.id,
       roleName: role.name,
       roleColor: role.color,
+      taskId: taskId || null,
       taskText: taskText || '',
       category,
       totalDurationSeconds: durationSeconds,
@@ -396,19 +454,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const elapsedSeconds = activeTimer.totalDurationSeconds - activeTimer.remainingSeconds;
       const elapsedMinutes = Math.max(1, Math.round(elapsedSeconds / 60));
 
-      const session: TimerSession = {
-        id: `session-${Date.now()}`,
-        roleId: activeTimer.roleId,
-        roleName: activeTimer.roleName,
-        roleColor: activeTimer.roleColor,
-        taskText: activeTimer.taskText || 'Sessione Focus',
-        category: activeTimer.category || 'important',
-        durationMinutes: elapsedMinutes,
-        startedAt: activeTimer.startedAt,
-        endedAt: Date.now(),
-        completed: true,
-      };
-      await db.timerSessions.add(session);
+      await recordSessionAndAccumulateTaskTime(
+        activeTimer.roleId,
+        activeTimer.roleName,
+        activeTimer.roleColor,
+        activeTimer.taskText,
+        activeTimer.category || 'important',
+        elapsedMinutes,
+        activeTimer.startedAt,
+        activeTimer.taskId
+      );
     }
 
     await db.activeTimer.put({
@@ -416,6 +471,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       roleId: null,
       roleName: '',
       roleColor: '#2563eb',
+      taskId: null,
       taskText: '',
       category: 'important',
       totalDurationSeconds: 25 * 60,

@@ -47,6 +47,22 @@ export function formatSecondsToTimer(totalSeconds: number): string {
 }
 
 /**
+ * Formats minutes into human friendly string (e.g. 25m, 1h 15m, 2h)
+ */
+export function formatMinutesToHoursMinutes(totalMinutes: number): string {
+  if (!totalMinutes || totalMinutes <= 0) return '0m';
+  const h = Math.floor(totalMinutes / 60);
+  const m = Math.round(totalMinutes % 60);
+  if (h > 0 && m > 0) {
+    return `${h}h ${m}m`;
+  }
+  if (h > 0) {
+    return `${h}h`;
+  }
+  return `${m}m`;
+}
+
+/**
  * Checks if a time slot is active at a given time and day
  */
 export function isSlotActiveAtTime(

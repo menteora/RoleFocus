@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { DECISION_MODES, type DecisionMode, type Role, type RoleTask } from '../types';
+import { formatMinutesToHoursMinutes } from '../utils/timeUtils';
 import {
   Zap,
   BatteryLow,
@@ -21,7 +22,13 @@ interface RoleDecisionTriadProps {
   role: Role;
   tasksByCategory: Record<DecisionMode, RoleTask[]>;
   activeDecisionMode: DecisionMode;
-  onStartTimer: (role: Role, taskText: string, durationMinutes: number, category: DecisionMode) => void;
+  onStartTimer: (
+    role: Role,
+    taskText: string,
+    durationMinutes: number,
+    category: DecisionMode,
+    taskId?: string
+  ) => void;
   isRoleTimerRunning: boolean;
 }
 
@@ -119,6 +126,7 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
           const modeTasks = tasksByCategory[modeConfig.key] || [];
           const topTask = modeTasks.find((t) => !t.completed) || modeTasks[0];
           const uncompletedCount = modeTasks.filter((t) => !t.completed).length;
+          const totalCategoryMinutes = modeTasks.reduce((sum, t) => sum + (t.totalMinutesSpent || 0), 0);
 
           return (
             <div
@@ -141,11 +149,18 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
                       {modeConfig.conditionLabel}
                     </span>
                   </div>
-                  {uncompletedCount > 0 && (
-                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-full bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
-                      {uncompletedCount}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {totalCategoryMinutes > 0 && (
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300" title="Tempo totale accumulato in questa categoria">
+                        {formatMinutesToHoursMinutes(totalCategoryMinutes)}
+                      </span>
+                    )}
+                    {uncompletedCount > 0 && (
+                      <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-full bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                        {uncompletedCount}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1">
@@ -241,6 +256,7 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
             currentCategoryTasks.map((task) => {
               const isEditing = editingTaskId === task.id;
               const isTaskActiveForTimer = currentActiveTask?.id === task.id;
+              const minutesSpent = task.totalMinutesSpent || 0;
 
               return (
                 <div
@@ -292,17 +308,32 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
                         </button>
                       </div>
                     ) : (
-                      <span
+                      <div
                         onClick={() => setRoleActiveDecision(role.id, activeDecisionMode, task.id)}
-                        className={`text-xs flex-1 truncate cursor-pointer select-none ${
-                          task.completed
-                            ? 'line-through text-slate-400'
-                            : 'font-medium text-slate-800 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400'
-                        }`}
+                        className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer select-none"
                         title="Clicca per selezionare questa come attività prioritaria"
                       >
-                        {task.text}
-                      </span>
+                        <span
+                          className={`text-xs truncate ${
+                            task.completed
+                              ? 'line-through text-slate-400'
+                              : 'font-medium text-slate-800 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400'
+                          }`}
+                        >
+                          {task.text}
+                        </span>
+
+                        {/* Tracked Time Badge on Task */}
+                        {minutesSpent > 0 && (
+                          <span
+                            className="shrink-0 text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/80 dark:border-blue-900/60 flex items-center gap-1"
+                            title={`Tempo totale speso su questa attività: ${minutesSpent} min (${task.sessionCount || 1} sessioni)`}
+                          >
+                            <Clock className="w-2.5 h-2.5" />
+                            <span>{formatMinutesToHoursMinutes(minutesSpent)}</span>
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
 
@@ -363,7 +394,8 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
                 role,
                 currentActiveTask?.text || `${currentModeConfig.actionLabel} (${role.name})`,
                 effectiveMinutes,
-                activeDecisionMode
+                activeDecisionMode,
+                currentActiveTask?.id
               )
             }
             disabled={isRoleTimerRunning}
