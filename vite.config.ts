@@ -10,9 +10,15 @@ export default defineConfig(() => {
   return {
     base,
     plugins: [react(), tailwindcss()],
+    define: {
+      global: 'window',
+      'process.env': {},
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+        'pouchdb-browser': path.resolve(__dirname, 'node_modules/pouchdb/dist/pouchdb.js'),
+        'pouchdb': path.resolve(__dirname, 'node_modules/pouchdb/dist/pouchdb.js'),
       },
     },
     server: {

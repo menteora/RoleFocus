@@ -140,7 +140,7 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
           <div className="flex items-center gap-2">
             <FileJson className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
-              Gestione Dati & Backup IndexedDB
+              Gestione Dati & Backup (PouchDB)
             </h2>
           </div>
           <button

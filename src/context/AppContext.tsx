@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import confetti from 'canvas-confetti';
 import { db, seedInitialDataIfNeeded, exportAllData, importAllData, resetDatabaseToDefault } from '../db/db';
 import type {
@@ -80,18 +79,17 @@ interface AppContextType {
     estimatedMinutes?: number;
     isCurrentPriority?: boolean;
   }) => Promise<string>;
-  deleteTask: (taskId: string) => Promise<void>;
-  toggleTaskStatus: (taskId: string) => Promise<void>;
-  setRoleActiveDecision: (roleId: string, category: DecisionMode, taskId?: string) => Promise<void>;
-
-  // Role Decisions state mapping (local per role)
-  selectedDecisions: Record<string, DecisionMode>;
   setRoleDecisionMode: (roleId: string, mode: DecisionMode) => void;
+  setRoleActiveDecision: (roleId: string, category: DecisionMode, taskId?: string) => Promise<void>;
+  toggleTaskStatus: (taskId: string) => Promise<void>;
+  deleteTask: (taskId: string) => Promise<void>;
 
-  // Settings & Theme
+  // Theme
   theme: 'light' | 'dark' | 'system';
   setTheme: (theme: 'light' | 'dark' | 'system') => Promise<void>;
   toggleTheme: () => Promise<void>;
+
+  // Settings
   updateSettings: (partial: Partial<AppSettings>) => Promise<void>;
 
   // Import / Export
@@ -112,27 +110,73 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [selectedFocusRoleId, setSelectedFocusRoleId] = useState<string | null>(null);
   const [selectedDecisions, setSelectedDecisions] = useState<Record<string, DecisionMode>>({});
 
-  // Initialize DB on mount
+  // PouchDB State
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
+  const [tasks, setTasks] = useState<RoleTask[]>([]);
+  const [timerSessions, setTimerSessions] = useState<TimerSession[]>([]);
+  const [activeTimerRecord, setActiveTimerRecord] = useState<ActiveTimerData | null>(null);
+  const [settingsRecord, setSettingsRecord] = useState<AppSettings | null>(null);
+
+  const refreshAllData = useCallback(async () => {
+    try {
+      const [r, s, t, sess, timer, sett] = await Promise.all([
+        db.roles.toArray(),
+        db.timeSlots.toArray(),
+        db.tasks.toArray(),
+        db.timerSessions.toArray(),
+        db.activeTimer.get('current_timer'),
+        db.settings.get('current_settings'),
+      ]);
+      setRoles(r);
+      setTimeSlots(s);
+      setTasks(t);
+      setTimerSessions(sess.sort((a, b) => b.startedAt - a.startedAt));
+      setActiveTimerRecord(timer);
+      setSettingsRecord(sett);
+    } catch (err) {
+      console.error('Error refreshing PouchDB data:', err);
+    }
+  }, []);
+
+  // Initialize DB on mount and subscribe to live changes
   useEffect(() => {
+    let unmounted = false;
+
     async function init() {
       try {
         await seedInitialDataIfNeeded();
+        if (!unmounted) {
+          await refreshAllData();
+        }
       } catch (err) {
-        console.error('Error initializing database:', err);
+        console.error('Error initializing PouchDB:', err);
       } finally {
-        setIsInitialized(true);
+        if (!unmounted) {
+          setIsInitialized(true);
+        }
       }
     }
-    init();
-  }, []);
 
-  // Live queries from Dexie IndexedDB
-  const roles = useLiveQuery(() => db.roles.toArray(), [], []) || [];
-  const timeSlots = useLiveQuery(() => db.timeSlots.toArray(), [], []) || [];
-  const tasks = useLiveQuery(() => db.tasks.toArray(), [], []) || [];
-  const timerSessions = useLiveQuery(() => db.timerSessions.orderBy('startedAt').reverse().toArray(), [], []) || [];
-  const activeTimerRecord = useLiveQuery(() => db.activeTimer.get('current_timer'), []);
-  const settingsRecord = useLiveQuery(() => db.settings.get('current_settings'), []);
+    init();
+
+    const unsubRoles = db.roles.subscribe(refreshAllData);
+    const unsubSlots = db.timeSlots.subscribe(refreshAllData);
+    const unsubTasks = db.tasks.subscribe(refreshAllData);
+    const unsubSessions = db.timerSessions.subscribe(refreshAllData);
+    const unsubActiveTimer = db.activeTimer.subscribe(refreshAllData);
+    const unsubSettings = db.settings.subscribe(refreshAllData);
+
+    return () => {
+      unmounted = true;
+      unsubRoles();
+      unsubSlots();
+      unsubTasks();
+      unsubSessions();
+      unsubActiveTimer();
+      unsubSettings();
+    };
+  }, [refreshAllData]);
 
   const settings: AppSettings = useMemo(() => {
     return (
@@ -148,11 +192,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
   }, [settingsRecord]);
 
-  // Real-time clock update (every second)
+  // Real-time clock update (every 10 seconds is sufficient for schedule updates)
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
-    }, 1000);
+    }, 10000);
     return () => clearInterval(timer);
   }, []);
 
@@ -305,11 +349,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
     } else if (taskText && roleId) {
-      const matchedTask = await db.tasks
-        .where('roleId')
-        .equals(roleId)
-        .filter((t) => t.text.trim().toLowerCase() === taskText.trim().toLowerCase())
-        .first();
+      const allTasks = await db.tasks.toArray();
+      const matchedTask = allTasks.find(
+        (t) => t.roleId === roleId && t.text.trim().toLowerCase() === taskText.trim().toLowerCase()
+      );
 
       if (matchedTask) {
         await db.tasks.update(matchedTask.id, {
@@ -528,19 +571,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteRole = async (roleId: string) => {
-    await db.transaction('rw', [db.roles, db.timeSlots, db.tasks], async () => {
-      await db.roles.delete(roleId);
-      await db.timeSlots.where('roleId').equals(roleId).delete();
-      await db.tasks.where('roleId').equals(roleId).delete();
-    });
+    await db.roles.delete(roleId);
+    const allSlots = await db.timeSlots.toArray();
+    for (const slot of allSlots.filter((s) => s.roleId === roleId)) {
+      await db.timeSlots.delete(slot.id);
+    }
+    const allTasks = await db.tasks.toArray();
+    for (const task of allTasks.filter((t) => t.roleId === roleId)) {
+      await db.tasks.delete(task.id);
+    }
   };
 
   const updateRoleOrder = async (roleIdsInOrder: string[]) => {
-    await db.transaction('rw', [db.roles], async () => {
-      for (let i = 0; i < roleIdsInOrder.length; i++) {
-        await db.roles.update(roleIdsInOrder[i], { priority: i + 1 });
-      }
-    });
+    for (let i = 0; i < roleIdsInOrder.length; i++) {
+      await db.roles.update(roleIdsInOrder[i], { priority: i + 1 });
+    }
   };
 
   // Slot Operations
@@ -588,6 +633,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       completed: existing ? existing.completed : false,
       isCurrentPriority: taskData.isCurrentPriority ?? true,
       estimatedMinutes: taskData.estimatedMinutes,
+      totalMinutesSpent: existing ? existing.totalMinutesSpent : 0,
+      sessionCount: existing ? existing.sessionCount : 0,
       createdAt: existing ? existing.createdAt : now,
     };
 
@@ -598,15 +645,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setRoleActiveDecision = async (roleId: string, category: DecisionMode, taskId?: string) => {
     setSelectedDecisions((prev) => ({ ...prev, [roleId]: category }));
     if (taskId) {
-      await db.transaction('rw', [db.tasks], async () => {
-        const roleTasks = await db.tasks.where('roleId').equals(roleId).toArray();
-        for (const t of roleTasks) {
-          if (t.isCurrentPriority && t.id !== taskId) {
-            await db.tasks.update(t.id, { isCurrentPriority: false });
-          }
+      const roleTasks = (await db.tasks.toArray()).filter((t) => t.roleId === roleId);
+      for (const t of roleTasks) {
+        if (t.isCurrentPriority && t.id !== taskId) {
+          await db.tasks.update(t.id, { isCurrentPriority: false });
         }
-        await db.tasks.update(taskId, { isCurrentPriority: true });
-      });
+      }
+      await db.tasks.update(taskId, { isCurrentPriority: true });
     }
   };
 
@@ -670,61 +715,66 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const importBackup = async (data: ExportDataPayload, mode: 'replace' | 'merge' = 'replace') => {
     await importAllData(data, mode);
+    await refreshAllData();
   };
 
   const resetToFactoryDefaults = async () => {
     await resetDatabaseToDefault();
+    await refreshAllData();
   };
 
-  const value: AppContextType = {
-    activeTab,
-    setActiveTab,
-    currentTime,
-    isSimulatingTime,
-    simulatedMinutes,
-    effectiveMinutes,
-    effectiveDayOfWeek,
-    setSimulatedTime,
-    resetToRealTime,
-    roles: sortedRoles,
-    timeSlots,
-    tasks,
-    timerSessions,
-    settings,
-    activeRolesInfo,
-    selectedFocusRoleId,
-    setSelectedFocusRoleId,
-    activeTimer,
-    startTimerForRole,
-    pauseTimer,
-    resumeTimer,
-    stopTimer,
-    extendTimerMinutes,
-    createOrUpdateRole,
-    deleteRole,
-    updateRoleOrder,
-    createOrUpdateSlot,
-    deleteSlot,
-    addOrUpdateTask,
-    deleteTask,
-    toggleTaskStatus,
-    setRoleActiveDecision,
-    selectedDecisions,
-    setRoleDecisionMode,
-    theme,
-    setTheme,
-    toggleTheme,
-    updateSettings,
-    exportBackup,
-    importBackup,
-    resetToFactoryDefaults,
-    isInitialized,
-  };
-
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return (
+    <AppContext.Provider
+      value={{
+        activeTab,
+        setActiveTab,
+        currentTime,
+        isSimulatingTime,
+        simulatedMinutes,
+        effectiveMinutes,
+        effectiveDayOfWeek,
+        setSimulatedTime,
+        resetToRealTime,
+        roles,
+        timeSlots,
+        tasks,
+        timerSessions,
+        settings,
+        activeRolesInfo,
+        selectedFocusRoleId,
+        setSelectedFocusRoleId,
+        activeTimer,
+        startTimerForRole,
+        pauseTimer,
+        resumeTimer,
+        stopTimer,
+        extendTimerMinutes,
+        createOrUpdateRole,
+        deleteRole,
+        updateRoleOrder,
+        createOrUpdateSlot,
+        deleteSlot,
+        addOrUpdateTask,
+        setRoleDecisionMode,
+        setRoleActiveDecision,
+        toggleTaskStatus,
+        deleteTask,
+        theme,
+        setTheme,
+        toggleTheme,
+        updateSettings,
+        exportBackup,
+        importBackup,
+        resetToFactoryDefaults,
+        isInitialized,
+      }}
+    >
+      {children}
+    </AppContext.Provider>
+  );
 }
 
-export function useApp() {
+export function useApp(): AppContextType {
   const context = useContext(AppContext);
   if (!context) {
     throw new Error('useApp must be used within an AppProvider');
