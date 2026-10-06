@@ -149,7 +149,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         db.activeTimer.get('current_timer'),
         db.settings.get('current_settings'),
       ]);
-      setRoles(r);
+      const sortedRolesList = [...r].sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
+      setRoles(sortedRolesList);
       setTimeSlots(s);
       setTasks(t);
       setTimerSessions(sess.sort((a, b) => b.startedAt - a.startedAt));
@@ -702,8 +703,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateRoleOrder = async (roleIdsInOrder: string[]) => {
+    const currentRoles = await db.roles.toArray();
+    const updatedRoles: Role[] = [];
+
     for (let i = 0; i < roleIdsInOrder.length; i++) {
-      await db.roles.update(roleIdsInOrder[i], { priority: i + 1 });
+      const roleId = roleIdsInOrder[i];
+      const role = currentRoles.find((r) => r.id === roleId);
+      if (role) {
+        updatedRoles.push({
+          ...role,
+          priority: i + 1,
+        });
+      }
+    }
+
+    if (updatedRoles.length > 0) {
+      await db.roles.bulkPut(updatedRoles);
+      await refreshAllData();
     }
   };
 

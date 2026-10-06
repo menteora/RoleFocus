@@ -120,18 +120,28 @@ export const ConfigPage: React.FC = () => {
                   {/* Reorder buttons */}
                   <div className="flex flex-col gap-0.5 pt-0.5">
                     <button
-                      onClick={() => handleMoveRole(index, 'up')}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMoveRole(index, 'up');
+                      }}
                       disabled={index === 0}
-                      title="Sposta su priorità"
-                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-20 transition-colors"
+                      title="Aumenta priorità (sposta in alto)"
+                      aria-label="Sposta in alto"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-20 disabled:pointer-events-none transition-colors"
                     >
                       <ArrowUp className="w-3.5 h-3.5" />
                     </button>
                     <button
-                      onClick={() => handleMoveRole(index, 'down')}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMoveRole(index, 'down');
+                      }}
                       disabled={index === roles.length - 1}
-                      title="Sposta giù priorità"
-                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-20 transition-colors"
+                      title="Diminuisci priorità (sposta in basso)"
+                      aria-label="Sposta in basso"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-20 disabled:pointer-events-none transition-colors"
                     >
                       <ArrowDown className="w-3.5 h-3.5" />
                     </button>
