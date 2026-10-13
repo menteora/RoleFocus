@@ -10,6 +10,7 @@ import {
   Server,
   RefreshCw,
   AlertCircle,
+  Inbox,
   Sparkles,
 } from 'lucide-react';
 import type { ActiveTab } from '../types';
@@ -31,14 +32,18 @@ export const Header: React.FC<HeaderProps> = ({
     isSimulatingTime,
     activeTimer,
     activeRolesInfo,
+    brainDumpItems,
     settings,
     couchDBSyncState,
   } = useApp();
 
+  const unreadInboxCount = brainDumpItems.filter((i) => i.status === 'inbox').length;
+
   const navItems: { id: ActiveTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'now', label: 'Adesso', icon: Clock },
+    { id: 'inbox', label: 'Inbox', icon: Inbox },
     { id: 'timeline', label: 'Panoramica 24h', icon: Calendar },
-    { id: 'config', label: 'Configurazione Ruoli', icon: Sliders },
+    { id: 'config', label: 'Ruoli & Config', icon: Sliders },
     { id: 'history', label: 'Storico Focus', icon: History },
   ];
 
@@ -87,6 +92,11 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600 dark:text-blue-400' : ''}`} />
                   <span>{item.label}</span>
+                  {item.id === 'inbox' && unreadInboxCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-400 font-mono">
+                      {unreadInboxCount}
+                    </span>
+                  )}
                   {item.id === 'now' && hasRunningTimer && (
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   )}
@@ -183,6 +193,11 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <div className="relative">
                   <Icon className="w-4 h-4" />
+                  {item.id === 'inbox' && unreadInboxCount > 0 && (
+                    <span className="absolute -top-1 -right-2 px-1 py-0.2 rounded-full text-[9px] font-black bg-amber-500 text-slate-950">
+                      {unreadInboxCount}
+                    </span>
+                  )}
                   {item.id === 'now' && hasRunningTimer && (
                     <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   )}

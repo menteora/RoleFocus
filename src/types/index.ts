@@ -1,6 +1,27 @@
-export type ActiveTab = 'now' | 'timeline' | 'config' | 'history' | 'settings';
+export type ActiveTab = 'now' | 'timeline' | 'inbox' | 'config' | 'history' | 'settings';
 
 export type DecisionMode = 'important' | 'quick' | 'unblocker';
+
+export type BrainDumpStatus = 'inbox' | 'converted' | 'discarded';
+
+export interface BrainDumpItem {
+  id: string;               // e.g. "bd-1742081234567"
+  text: string;             // Quick thought / note
+  notes?: string;           // Optional extra details
+  createdAt: number;        // Timestamp
+  status: BrainDumpStatus;  // 'inbox' | 'converted' | 'discarded'
+  assignedRoleId?: string;  // Role id if converted
+  assignedCategory?: DecisionMode; // Category if converted
+  convertedTaskId?: string; // Created task id
+  processedAt?: number;     // When converted or discarded
+}
+
+export type TaskCleanupUnit = 'hours' | 'days' | 'weeks';
+
+export interface TaskCleanupFilter {
+  amount: number;
+  unit: TaskCleanupUnit;
+}
 
 export interface DecisionModeConfig {
   key: DecisionMode;
@@ -146,5 +167,6 @@ export interface ExportDataPayload {
   timeSlots: TimeSlot[];
   tasks: RoleTask[];
   timerSessions: TimerSession[];
+  brainDump?: BrainDumpItem[];
   settings?: AppSettings;
 }

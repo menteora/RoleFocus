@@ -15,6 +15,8 @@ import type {
   RoleTask,
   TimerSession,
   ActiveTimerData,
+  BrainDumpItem,
+  TaskCleanupUnit,
   AppSettings,
   CouchDBSettings,
   CouchDBSyncState,
@@ -24,6 +26,7 @@ import type {
 } from '../types';
 import { isSlotActiveAtTime } from '../utils/timeUtils';
 import { playCompletionChime, playButtonTick, sendTimerNotification } from '../utils/soundUtils';
+import { getThresholdTimestamp, isTaskOlderThanThreshold } from '../utils/cleanupUtils';
 
 export interface ActiveRoleInfo {
   role: Role;
@@ -52,6 +55,7 @@ interface AppContextType {
   timeSlots: TimeSlot[];
   tasks: RoleTask[];
   timerSessions: TimerSession[];
+  brainDumpItems: BrainDumpItem[];
   settings: AppSettings;
   activeRolesInfo: ActiveRoleInfo[];
   selectedFocusRoleId: string | null;
@@ -78,6 +82,16 @@ interface AppContextType {
   stopTimer: (recordCompleted?: boolean) => Promise<void>;
   extendTimerMinutes: (deltaMinutes: number) => Promise<void>;
 
+  // Brain Dump & Inbox
+  isBrainDumpModalOpen: boolean;
+  openBrainDumpModal: () => void;
+  closeBrainDumpModal: () => void;
+  addBrainDumpItem: (text: string, notes?: string) => Promise<string>;
+  convertBrainDumpToTask: (itemId: string, roleId: string, category: DecisionMode) => Promise<string>;
+  discardBrainDumpItem: (itemId: string) => Promise<void>;
+  restoreBrainDumpItem: (itemId: string) => Promise<void>;
+  deleteBrainDumpItem: (itemId: string) => Promise<void>;
+
   // Role Operations
   createOrUpdateRole: (role: Omit<Role, 'createdAt' | 'updatedAt' | 'id'> & { id?: string }) => Promise<string>;
   deleteRole: (roleId: string) => Promise<void>;
@@ -100,6 +114,7 @@ interface AppContextType {
   setRoleActiveDecision: (roleId: string, category: DecisionMode, taskId?: string) => Promise<void>;
   toggleTaskStatus: (taskId: string) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
+  deleteCompletedTasksOlderThan: (amount: number, unit: TaskCleanupUnit) => Promise<number>;
 
   // Theme
   theme: 'light' | 'dark' | 'system';
@@ -136,16 +151,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [tasks, setTasks] = useState<RoleTask[]>([]);
   const [timerSessions, setTimerSessions] = useState<TimerSession[]>([]);
+  const [brainDumpItems, setBrainDumpItems] = useState<BrainDumpItem[]>([]);
   const [activeTimerRecord, setActiveTimerRecord] = useState<ActiveTimerData | null>(null);
   const [settingsRecord, setSettingsRecord] = useState<AppSettings | null>(null);
 
+  // Quick Brain Dump Modal
+  const [isBrainDumpModalOpen, setIsBrainDumpModalOpen] = useState<boolean>(false);
+  const openBrainDumpModal = useCallback(() => setIsBrainDumpModalOpen(true), []);
+  const closeBrainDumpModal = useCallback(() => setIsBrainDumpModalOpen(false), []);
+
   const refreshAllData = useCallback(async () => {
     try {
-      const [r, s, t, sess, timer, sett] = await Promise.all([
+      const [r, s, t, sess, bd, timer, sett] = await Promise.all([
         db.roles.toArray(),
         db.timeSlots.toArray(),
         db.tasks.toArray(),
         db.timerSessions.toArray(),
+        db.brainDump.toArray(),
         db.activeTimer.get('current_timer'),
         db.settings.get('current_settings'),
       ]);
@@ -154,11 +176,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setTimeSlots(s);
       setTasks(t);
       setTimerSessions(sess.sort((a, b) => b.startedAt - a.startedAt));
+      setBrainDumpItems(bd.sort((a, b) => b.createdAt - a.createdAt));
       setActiveTimerRecord(timer);
       setSettingsRecord(sett);
     } catch (err) {
       console.error('Error refreshing PouchDB data:', err);
     }
+  }, []);
+
+  // Keyboard shortcut listener for Brain Dump (e.g. press 'b' when not in inputs)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'b' || e.key === 'B') {
+        const target = e.target as HTMLElement | null;
+        if (!target) return;
+        const isInput =
+          target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable;
+        if (!isInput && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          setIsBrainDumpModalOpen((prev) => !prev);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   // Initialize DB on mount and subscribe to live changes
@@ -186,6 +230,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const unsubSlots = db.timeSlots.subscribe(refreshAllData);
     const unsubTasks = db.tasks.subscribe(refreshAllData);
     const unsubSessions = db.timerSessions.subscribe(refreshAllData);
+    const unsubBrainDump = db.brainDump.subscribe(refreshAllData);
     const unsubActiveTimer = db.activeTimer.subscribe(refreshAllData);
     const unsubSettings = db.settings.subscribe(refreshAllData);
 
@@ -202,6 +247,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubSlots();
       unsubTasks();
       unsubSessions();
+      unsubBrainDump();
       unsubActiveTimer();
       unsubSettings();
       unsubSync();
@@ -843,6 +889,95 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
+  // Brain Dump Operations
+  const addBrainDumpItem = async (text: string, notes?: string): Promise<string> => {
+    const trimmed = text.trim();
+    if (!trimmed) return '';
+    playButtonTick();
+    const now = Date.now();
+    const id = `bd-${now}-${Math.random().toString(36).substring(2, 6)}`;
+    const item: BrainDumpItem = {
+      id,
+      text: trimmed,
+      notes: notes?.trim() || undefined,
+      createdAt: now,
+      status: 'inbox',
+    };
+    await db.brainDump.put(item);
+    return id;
+  };
+
+  const convertBrainDumpToTask = async (
+    itemId: string,
+    roleId: string,
+    category: DecisionMode
+  ): Promise<string> => {
+    const item = await db.brainDump.get(itemId);
+    if (!item) return '';
+    playButtonTick();
+    const now = Date.now();
+    const taskId = `task-${now}`;
+    const newTask: RoleTask = {
+      id: taskId,
+      roleId,
+      category,
+      text: item.text,
+      completed: false,
+      isCurrentPriority: true,
+      createdAt: now,
+      totalMinutesSpent: 0,
+      sessionCount: 0,
+    };
+    await db.tasks.put(newTask);
+    await db.brainDump.update(itemId, {
+      status: 'converted',
+      assignedRoleId: roleId,
+      assignedCategory: category,
+      convertedTaskId: taskId,
+      processedAt: now,
+    });
+    return taskId;
+  };
+
+  const discardBrainDumpItem = async (itemId: string): Promise<void> => {
+    playButtonTick();
+    await db.brainDump.update(itemId, {
+      status: 'discarded',
+      processedAt: Date.now(),
+    });
+  };
+
+  const restoreBrainDumpItem = async (itemId: string): Promise<void> => {
+    playButtonTick();
+    await db.brainDump.update(itemId, {
+      status: 'inbox',
+      assignedRoleId: undefined,
+      assignedCategory: undefined,
+      convertedTaskId: undefined,
+      processedAt: undefined,
+    });
+  };
+
+  const deleteBrainDumpItem = async (itemId: string): Promise<void> => {
+    playButtonTick();
+    await db.brainDump.delete(itemId);
+  };
+
+  // Admin Task Cleanup
+  const deleteCompletedTasksOlderThan = async (amount: number, unit: TaskCleanupUnit): Promise<number> => {
+    playButtonTick();
+    const threshold = getThresholdTimestamp(amount, unit);
+    const allTasks = await db.tasks.toArray();
+    const toDelete = allTasks.filter((t) => t.completed && isTaskOlderThanThreshold(t, threshold));
+
+    for (const task of toDelete) {
+      await db.tasks.delete(task.id);
+    }
+
+    await refreshAllData();
+    return toDelete.length;
+  };
+
   // Import / Export
   const exportBackup = async () => {
     return await exportAllData();
@@ -874,6 +1009,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         timeSlots,
         tasks,
         timerSessions,
+        brainDumpItems,
         settings,
         activeRolesInfo,
         selectedFocusRoleId,
@@ -889,6 +1025,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         resumeTimer,
         stopTimer,
         extendTimerMinutes,
+        isBrainDumpModalOpen,
+        openBrainDumpModal,
+        closeBrainDumpModal,
+        addBrainDumpItem,
+        convertBrainDumpToTask,
+        discardBrainDumpItem,
+        restoreBrainDumpItem,
+        deleteBrainDumpItem,
         createOrUpdateRole,
         deleteRole,
         updateRoleOrder,
@@ -899,6 +1043,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setRoleActiveDecision,
         toggleTaskStatus,
         deleteTask,
+        deleteCompletedTasksOlderThan,
         theme,
         setTheme,
         toggleTheme,

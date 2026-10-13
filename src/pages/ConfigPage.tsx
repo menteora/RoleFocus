@@ -4,6 +4,7 @@ import { RoleIcon } from '../utils/icons';
 import { formatSlotDays, getSlotDurationMinutes } from '../utils/timeUtils';
 import { RoleEditorModal } from '../components/RoleEditorModal';
 import { SlotEditorModal } from '../components/SlotEditorModal';
+import { TaskCleanupSection } from '../components/TaskCleanupSection';
 import {
   Plus,
   Edit2,
@@ -274,6 +275,9 @@ export const ConfigPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Task Retention & Cleanup Administration Section */}
+      <TaskCleanupSection />
 
       {/* Role Editor Modal */}
       <RoleEditorModal

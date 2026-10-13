@@ -5,6 +5,7 @@ import type {
   RoleTask,
   TimerSession,
   ActiveTimerData,
+  BrainDumpItem,
   AppSettings,
   CouchDBSettings,
   CouchDBSyncState,
@@ -203,6 +204,7 @@ export class RoleFocusPouchDB {
   tasks = new PouchCollection<RoleTask>('rolefocus_pouch_tasks');
   timerSessions = new PouchCollection<TimerSession>('rolefocus_pouch_sessions');
   activeTimer = new PouchCollection<ActiveTimerData>('rolefocus_pouch_active_timer');
+  brainDump = new PouchCollection<BrainDumpItem>('rolefocus_pouch_braindump');
   settings = new PouchCollection<AppSettings>('rolefocus_pouch_settings');
 }
 
@@ -413,6 +415,7 @@ export class CouchDBSyncManager {
       { name: `${prefix}tasks`, col: db.tasks },
       { name: `${prefix}sessions`, col: db.timerSessions },
       { name: `${prefix}timer`, col: db.activeTimer },
+      { name: `${prefix}braindump`, col: db.brainDump },
       { name: `${prefix}settings`, col: db.settings },
     ];
 
@@ -451,6 +454,7 @@ export class CouchDBSyncManager {
       { name: `${prefix}tasks`, col: db.tasks },
       { name: `${prefix}sessions`, col: db.timerSessions },
       { name: `${prefix}timer`, col: db.activeTimer },
+      { name: `${prefix}braindump`, col: db.brainDump },
       { name: `${prefix}settings`, col: db.settings },
     ];
 
@@ -552,6 +556,7 @@ export async function exportAllData(): Promise<ExportDataPayload> {
   const timeSlots = await db.timeSlots.toArray();
   const tasks = await db.tasks.toArray();
   const timerSessions = await db.timerSessions.toArray();
+  const brainDump = await db.brainDump.toArray();
   const settings = (await db.settings.get('current_settings')) || {
     id: 'current_settings',
     theme: 'system',
@@ -569,6 +574,7 @@ export async function exportAllData(): Promise<ExportDataPayload> {
     timeSlots,
     tasks,
     timerSessions,
+    brainDump,
     settings,
   };
 }
@@ -584,6 +590,7 @@ export async function importAllData(payload: ExportDataPayload, mode: 'replace' 
     await db.timeSlots.clear();
     await db.tasks.clear();
     await db.timerSessions.clear();
+    await db.brainDump.clear();
   }
 
   if (payload.roles?.length) {
@@ -603,6 +610,9 @@ export async function importAllData(payload: ExportDataPayload, mode: 'replace' 
   if (payload.timerSessions?.length) {
     await db.timerSessions.bulkPut(payload.timerSessions);
   }
+  if (payload.brainDump?.length) {
+    await db.brainDump.bulkPut(payload.brainDump);
+  }
   if (payload.settings) {
     await db.settings.put({ ...payload.settings, id: 'current_settings' });
   }
@@ -614,6 +624,7 @@ export async function resetDatabaseToDefault(): Promise<void> {
   await db.timeSlots.clear();
   await db.tasks.clear();
   await db.timerSessions.clear();
+  await db.brainDump.clear();
   await db.activeTimer.clear();
   await db.settings.clear();
   await seedInitialDataIfNeeded();
