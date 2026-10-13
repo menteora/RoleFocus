@@ -110,6 +110,7 @@ interface AppContextType {
     estimatedMinutes?: number;
     isCurrentPriority?: boolean;
   }) => Promise<string>;
+  selectedDecisions: Record<string, DecisionMode>;
   setRoleDecisionMode: (roleId: string, mode: DecisionMode) => void;
   setRoleActiveDecision: (roleId: string, category: DecisionMode, taskId?: string) => Promise<void>;
   toggleTaskStatus: (taskId: string) => Promise<void>;
@@ -140,7 +141,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
   const [selectedFocusRoleId, setSelectedFocusRoleId] = useState<string | null>(null);
-  const [selectedDecisions, setSelectedDecisions] = useState<Record<string, DecisionMode>>({});
+  const [selectedDecisions, setSelectedDecisions] = useState<Record<string, DecisionMode>>(() => {
+    try {
+      const saved = localStorage.getItem('rolefocus_selected_decisions');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
 
   // CouchDB Sync State
   const [couchDBSyncState, setCouchDBSyncState] = useState<CouchDBSyncState>('disconnected');
@@ -453,7 +461,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [activeRolesInfo, selectedFocusRoleId, sortedRoles]);
 
   const setRoleDecisionMode = useCallback((roleId: string, mode: DecisionMode) => {
-    setSelectedDecisions((prev) => ({ ...prev, [roleId]: mode }));
+    setSelectedDecisions((prev) => {
+      const next = { ...prev, [roleId]: mode };
+      try {
+        localStorage.setItem('rolefocus_selected_decisions', JSON.stringify(next));
+      } catch (err) {
+        console.warn('Could not save selected decisions to localStorage', err);
+      }
+      return next;
+    });
   }, []);
 
   // Local in-memory clock tick for timer countdown without hammering PouchDB/CouchDB
@@ -824,7 +840,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const setRoleActiveDecision = async (roleId: string, category: DecisionMode, taskId?: string) => {
-    setSelectedDecisions((prev) => ({ ...prev, [roleId]: category }));
+    setRoleDecisionMode(roleId, category);
     if (taskId) {
       const roleTasks = (await db.tasks.toArray()).filter((t) => t.roleId === roleId);
       for (const t of roleTasks) {
@@ -1039,6 +1055,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         createOrUpdateSlot,
         deleteSlot,
         addOrUpdateTask,
+        selectedDecisions,
         setRoleDecisionMode,
         setRoleActiveDecision,
         toggleTaskStatus,

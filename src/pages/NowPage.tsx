@@ -24,6 +24,7 @@ export const NowPage: React.FC = () => {
     effectiveDayOfWeek,
     startTimerForRole,
     activeTimer,
+    selectedDecisions,
     setActiveTab,
   } = useApp();
 
@@ -278,7 +279,7 @@ export const NowPage: React.FC = () => {
           <RoleDecisionTriad
             role={selectedRole}
             tasksByCategory={selectedRoleData.tasksByCategory}
-            activeDecisionMode="important"
+            activeDecisionMode={selectedDecisions[selectedRole.id] || 'important'}
             onStartTimer={handleStartTimer}
             isRoleTimerRunning={isSelectedRoleTimerRunning}
           />
