@@ -1,4 +1,4 @@
-export type ActiveTab = 'now' | 'timeline' | 'inbox' | 'config' | 'history' | 'settings';
+export type ActiveTab = 'now' | 'tasks' | 'timeline' | 'inbox' | 'config' | 'history' | 'settings';
 
 export type DecisionMode = 'important' | 'quick' | 'unblocker';
 
@@ -98,6 +98,7 @@ export interface RoleTask {
   text: string;
   completed: boolean;
   isCurrentPriority: boolean;
+  isUrgent?: boolean; // Pinned as urgent with flame icon 🔥
   estimatedMinutes?: number;
   totalMinutesSpent?: number; // Accumulated minutes spent in focus sessions
   sessionCount?: number;      // Number of sessions completed on this task

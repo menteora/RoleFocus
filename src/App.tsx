@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { SimulatedTimeBar } from './components/SimulatedTimeBar';
 import { ImportExportModal } from './components/ImportExportModal';
 import { NowPage } from './pages/NowPage';
+import { TasksPage } from './pages/TasksPage';
 import { InboxPage } from './pages/InboxPage';
 import { TimelinePage } from './pages/TimelinePage';
 import { ConfigPage } from './pages/ConfigPage';
@@ -37,6 +38,7 @@ function MainAppShell() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'now' && <NowPage />}
+        {activeTab === 'tasks' && <TasksPage />}
         {activeTab === 'inbox' && <InboxPage />}
         {activeTab === 'timeline' && <TimelinePage />}
         {activeTab === 'config' && <ConfigPage />}

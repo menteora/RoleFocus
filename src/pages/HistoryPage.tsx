@@ -15,16 +15,18 @@ import {
   Unlock,
   BarChart3,
   Calendar,
+  CalendarDays,
   ListTodo,
   Sparkles,
 } from 'lucide-react';
 import type { DecisionMode } from '../types';
+import { DailyStatsSection } from '../components/DailyStatsSection';
 
-type HistoryViewMode = 'activities' | 'sessions' | 'strategy';
+type HistoryViewMode = 'daily' | 'activities' | 'sessions' | 'strategy';
 
 export const HistoryPage: React.FC = () => {
   const { timerSessions, tasks, roles } = useApp();
-  const [viewMode, setViewMode] = useState<HistoryViewMode>('activities');
+  const [viewMode, setViewMode] = useState<HistoryViewMode>('daily');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>('all');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -276,10 +278,22 @@ export const HistoryPage: React.FC = () => {
 
       {/* View Mode Switcher */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl overflow-x-auto">
+          <button
+            onClick={() => setViewMode('daily')}
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+              viewMode === 'daily'
+                ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <CalendarDays className="w-3.5 h-3.5" />
+            <span>Statistiche Giornaliere</span>
+          </button>
+
           <button
             onClick={() => setViewMode('activities')}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               viewMode === 'activities'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -291,7 +305,7 @@ export const HistoryPage: React.FC = () => {
 
           <button
             onClick={() => setViewMode('sessions')}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               viewMode === 'sessions'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -303,7 +317,7 @@ export const HistoryPage: React.FC = () => {
 
           <button
             onClick={() => setViewMode('strategy')}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               viewMode === 'strategy'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -358,6 +372,11 @@ export const HistoryPage: React.FC = () => {
           </button>
         ))}
       </div>
+
+      {/* VIEW: DAILY STATS */}
+      {viewMode === 'daily' && (
+        <DailyStatsSection sessions={filteredSessions} roles={roles} />
+      )}
 
       {/* VIEW 1: AGGREGATED TIME PER ACTIVITY (Main Request) */}
       {viewMode === 'activities' && (

@@ -13,6 +13,8 @@ import {
   Inbox,
   Sparkles,
   Check,
+  ListTodo,
+  Flame,
 } from 'lucide-react';
 import type { ActiveTab } from '../types';
 
@@ -34,19 +36,22 @@ export const Header: React.FC<HeaderProps> = ({
     activeTimer,
     activeRolesInfo,
     brainDumpItems,
+    tasks,
     settings,
     couchDBSyncState,
     syncProgress,
   } = useApp();
 
   const unreadInboxCount = brainDumpItems.filter((i) => i.status === 'inbox').length;
+  const urgentTasksCount = tasks.filter((t) => !t.completed && t.isUrgent).length;
 
   const navItems: { id: ActiveTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'now', label: 'Adesso', icon: Clock },
+    { id: 'tasks', label: 'Tutti i Task', icon: ListTodo },
     { id: 'inbox', label: 'Inbox', icon: Inbox },
     { id: 'timeline', label: 'Panoramica 24h', icon: Calendar },
     { id: 'config', label: 'Ruoli & Config', icon: Sliders },
-    { id: 'history', label: 'Storico Focus', icon: History },
+    { id: 'history', label: 'Statistiche & Storico', icon: History },
   ];
 
   const hasRunningTimer = activeTimer && (activeTimer.status === 'running' || activeTimer.status === 'paused');
@@ -94,6 +99,15 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600 dark:text-blue-400' : ''}`} />
                   <span>{item.label}</span>
+                  {item.id === 'tasks' && urgentTasksCount > 0 && (
+                    <span
+                      className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-orange-100 dark:bg-orange-950/80 text-orange-600 dark:text-orange-400 font-mono flex items-center gap-0.5 shadow-2xs"
+                      title={`${urgentTasksCount} task ${urgentTasksCount === 1 ? 'urgente' : 'urgenti'} con risalto 🔥`}
+                    >
+                      <Flame className="w-2.5 h-2.5 fill-orange-500 text-orange-500 animate-pulse" />
+                      <span>{urgentTasksCount}</span>
+                    </span>
+                  )}
                   {item.id === 'inbox' && unreadInboxCount > 0 && (
                     <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-400 font-mono">
                       {unreadInboxCount}
@@ -197,6 +211,12 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <div className="relative">
                   <Icon className="w-4 h-4" />
+                  {item.id === 'tasks' && urgentTasksCount > 0 && (
+                    <span className="absolute -top-1 -right-2 px-1 py-0.2 rounded-full text-[9px] font-black bg-orange-500 text-white flex items-center">
+                      <Flame className="w-2 h-2 fill-white" />
+                      <span>{urgentTasksCount}</span>
+                    </span>
+                  )}
                   {item.id === 'inbox' && unreadInboxCount > 0 && (
                     <span className="absolute -top-1 -right-2 px-1 py-0.2 rounded-full text-[9px] font-black bg-amber-500 text-slate-950">
                       {unreadInboxCount}

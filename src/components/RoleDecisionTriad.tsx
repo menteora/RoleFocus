@@ -7,6 +7,7 @@ import {
   BatteryLow,
   Unlock,
   Play,
+  Flame,
   Plus,
   Trash2,
   Edit2,
@@ -45,6 +46,7 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
     addOrUpdateTask,
     deleteTask,
     toggleTaskStatus,
+    toggleTaskUrgent,
     setRoleDecisionMode,
     setRoleActiveDecision,
   } = useApp();
@@ -64,6 +66,7 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
   const [editingText, setEditingText] = useState('');
   const [addingToCategory, setAddingToCategory] = useState<DecisionMode | null>(null);
   const [newTaskText, setNewTaskText] = useState('');
+  const [isNewTaskUrgent, setIsNewTaskUrgent] = useState(false);
   const [customDuration, setCustomDuration] = useState<number | null>(null);
 
   // Closed tasks accordion: compressed/collapsed by default
@@ -114,8 +117,10 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
       category,
       text: newTaskText.trim(),
       isCurrentPriority: true,
+      isUrgent: isNewTaskUrgent,
     });
     setNewTaskText('');
+    setIsNewTaskUrgent(false);
     setAddingToCategory(null);
     setSelectedMode(category);
     setRoleDecisionMode(role.id, category);
@@ -123,11 +128,18 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
 
   // Find the tasks for the selected mode, partitioned into active vs completed
   const currentCategoryTasks = tasksByCategory[selectedMode] || [];
-  const activeTasks = currentCategoryTasks.filter((t) => !t.completed);
+  const rawActiveTasks = currentCategoryTasks.filter((t) => !t.completed);
+  // Sort so that urgent tasks are placed at the very top!
+  const activeTasks = [...rawActiveTasks].sort((a, b) => {
+    if (a.isUrgent && !b.isUrgent) return -1;
+    if (!a.isUrgent && b.isUrgent) return 1;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
   const completedTasks = currentCategoryTasks.filter((t) => t.completed);
 
-  // Active target task for the timer: prioritizes uncompleted priority task
+  // Active target task for the timer: prioritizes uncompleted urgent task, then priority task
   const currentActiveTask =
+    activeTasks.find((t) => t.isUrgent) ||
     activeTasks.find((t) => t.isCurrentPriority) ||
     activeTasks[0] ||
     null;
@@ -148,6 +160,7 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
           const completedModeTasks = modeTasks.filter((t) => t.completed);
           const topTask = activeModeTasks[0] || null;
           const uncompletedCount = activeModeTasks.length;
+          const urgentCategoryCount = activeModeTasks.filter((t) => t.isUrgent).length;
           const totalCategoryMinutes = modeTasks.reduce((sum, t) => sum + (t.totalMinutesSpent || 0), 0);
 
           return (
@@ -174,6 +187,15 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
                     </span>
                   </div>
                   <div className="flex items-center gap-1">
+                    {urgentCategoryCount > 0 && (
+                      <span
+                        className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-950/80 text-orange-600 dark:text-orange-400 border border-orange-300 dark:border-orange-800 flex items-center gap-0.5 shadow-2xs"
+                        title={`${urgentCategoryCount} attività con risalto urgente 🔥`}
+                      >
+                        <Flame className="w-2.5 h-2.5 fill-orange-500 text-orange-500 animate-pulse" />
+                        <span>{urgentCategoryCount}</span>
+                      </span>
+                    )}
                     {totalCategoryMinutes > 0 && (
                       <span
                         className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
@@ -270,7 +292,23 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
             />
             <button
               type="button"
-              onClick={() => setAddingToCategory(null)}
+              onClick={() => setIsNewTaskUrgent(!isNewTaskUrgent)}
+              className={`px-2 py-1 text-xs rounded-lg flex items-center gap-1 border transition-colors cursor-pointer shrink-0 ${
+                isNewTaskUrgent
+                  ? 'bg-orange-100 dark:bg-orange-950/70 border-orange-300 dark:border-orange-700 text-orange-600 dark:text-orange-400 font-semibold'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:text-orange-500'
+              }`}
+              title="Contrassegna come urgente 🔥"
+            >
+              <Flame className={`w-3 h-3 ${isNewTaskUrgent ? 'fill-orange-500 text-orange-500' : ''}`} />
+              <span className="hidden sm:inline">Urgente</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAddingToCategory(null);
+                setIsNewTaskUrgent(false);
+              }}
               className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
@@ -297,13 +335,15 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
                 <div
                   key={task.id}
                   className={`p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2.5 ${
-                    isTaskActiveForTimer
+                    task.isUrgent
+                      ? 'bg-orange-50/50 dark:bg-orange-950/25 border-orange-300/90 dark:border-orange-600/80 shadow-xs ring-1 ring-orange-400/25'
+                      : isTaskActiveForTimer
                       ? 'bg-white dark:bg-slate-800 border-blue-400 dark:border-blue-600 shadow-xs ring-1 ring-blue-500/20'
                       : 'bg-white/60 dark:bg-slate-800/40 border-slate-200/60 dark:border-slate-700/60 hover:bg-white dark:hover:bg-slate-800'
                   }`}
                 >
-                  {/* Checkbox and Text / Editor */}
-                  <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                  {/* Checkbox, Flame Pin, and Text / Editor */}
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
                     <button
                       type="button"
                       onClick={() => toggleTaskStatus(task.id)}
@@ -311,6 +351,22 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
                       className="text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors shrink-0 cursor-pointer"
                     >
                       <Circle className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleTaskUrgent(task.id);
+                      }}
+                      title={task.isUrgent ? 'Rimuovi risalto urgente' : 'Contrassegna come urgente 🔥 (posiziona in cima)'}
+                      className={`p-1 rounded-md transition-all cursor-pointer shrink-0 ${
+                        task.isUrgent
+                          ? 'text-orange-500 hover:text-orange-600 bg-orange-100/90 dark:bg-orange-950/80'
+                          : 'text-slate-300 dark:text-slate-600 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-950/30'
+                      }`}
+                    >
+                      <Flame className={`w-3.5 h-3.5 ${task.isUrgent ? 'fill-orange-500 text-orange-500 animate-pulse' : ''}`} />
                     </button>
 
                     {isEditing ? (
@@ -347,9 +403,20 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
                         className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer select-none"
                         title="Clicca per selezionare come obiettivo prioritario per il timer"
                       >
-                        <span className="text-xs font-medium text-slate-800 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 truncate">
+                        <span className={`text-xs font-medium truncate ${
+                          task.isUrgent
+                            ? 'text-orange-950 dark:text-orange-100 font-semibold'
+                            : 'text-slate-800 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400'
+                        }`}>
                           {task.text}
                         </span>
+
+                        {task.isUrgent && (
+                          <span className="shrink-0 text-[10px] font-bold text-orange-600 dark:text-orange-400 bg-orange-100 dark:bg-orange-950/80 border border-orange-200 dark:border-orange-800/80 px-1.5 py-0.2 rounded flex items-center gap-0.5 shadow-2xs">
+                            <Flame className="w-2.5 h-2.5 fill-orange-500 text-orange-500" />
+                            <span>Urgente</span>
+                          </span>
+                        )}
 
                         {isTaskActiveForTimer && (
                           <span className="shrink-0 text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.2 rounded">

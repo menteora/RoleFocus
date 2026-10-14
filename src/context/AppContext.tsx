@@ -130,11 +130,13 @@ interface AppContextType {
     text: string;
     estimatedMinutes?: number;
     isCurrentPriority?: boolean;
+    isUrgent?: boolean;
   }) => Promise<string>;
   selectedDecisions: Record<string, DecisionMode>;
   setRoleDecisionMode: (roleId: string, mode: DecisionMode) => void;
   setRoleActiveDecision: (roleId: string, category: DecisionMode, taskId?: string) => Promise<void>;
   toggleTaskStatus: (taskId: string) => Promise<void>;
+  toggleTaskUrgent: (taskId: string) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
   deleteCompletedTasksOlderThan: (amount: number, unit: TaskCleanupUnit) => Promise<number>;
 
@@ -492,6 +494,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const chosenCategory = selectedDecisions[role.id] || 'important';
         const categoryTasks = tasksByCategory[chosenCategory] || [];
         const activeTask =
+          categoryTasks.find((t) => t.isUrgent && !t.completed) ||
           categoryTasks.find((t) => t.isCurrentPriority && !t.completed) ||
           categoryTasks.find((t) => !t.completed) ||
           categoryTasks[0] ||
@@ -877,6 +880,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     text: string;
     estimatedMinutes?: number;
     isCurrentPriority?: boolean;
+    isUrgent?: boolean;
   }) => {
     const now = Date.now();
     const id = taskData.id || `task-${now}`;
@@ -889,6 +893,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       text: taskData.text.trim(),
       completed: existing ? existing.completed : false,
       isCurrentPriority: taskData.isCurrentPriority ?? true,
+      isUrgent: taskData.isUrgent !== undefined ? taskData.isUrgent : (existing ? existing.isUrgent : false),
       estimatedMinutes: taskData.estimatedMinutes,
       totalMinutesSpent: existing ? existing.totalMinutesSpent : 0,
       sessionCount: existing ? existing.sessionCount : 0,
@@ -920,6 +925,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await db.tasks.update(taskId, {
       completed: !task.completed,
       completedAt: !task.completed ? now : undefined,
+    });
+  };
+
+  const toggleTaskUrgent = async (taskId: string) => {
+    const task = await db.tasks.get(taskId);
+    if (!task) return;
+    playButtonTick();
+    await db.tasks.update(taskId, {
+      isUrgent: !task.isUrgent,
     });
   };
 
@@ -1123,6 +1137,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setRoleDecisionMode,
         setRoleActiveDecision,
         toggleTaskStatus,
+        toggleTaskUrgent,
         deleteTask,
         deleteCompletedTasksOlderThan,
         theme,

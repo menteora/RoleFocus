@@ -11,6 +11,11 @@ import {
   AlertCircle,
   RotateCcw,
   Sparkles,
+  Flame,
+  ListTodo,
+  Play,
+  Circle,
+  ArrowRight,
 } from 'lucide-react';
 import type { Role, DecisionMode, TimeSlot, RoleTask } from '../types';
 
@@ -26,6 +31,8 @@ export const NowPage: React.FC = () => {
     activeTimer,
     selectedDecisions,
     setActiveTab,
+    toggleTaskStatus,
+    toggleTaskUrgent,
   } = useApp();
 
   // Manually selected role id (if null, defaults to first scheduled role)
@@ -130,6 +137,9 @@ export const NowPage: React.FC = () => {
     activeTimer?.roleId === selectedRole?.id && isTimerRunning
   );
 
+  const openTasks = useMemo(() => tasks.filter((t) => !t.completed), [tasks]);
+  const urgentTasks = useMemo(() => openTasks.filter((t) => t.isUrgent), [openTasks]);
+
   return (
     <div className="space-y-6">
       
@@ -151,14 +161,143 @@ export const NowPage: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => setActiveTab('config')}
-          className="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center gap-1.5 self-start sm:self-auto py-1 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-        >
-          <Sliders className="w-3.5 h-3.5" />
-          <span>Gestisci ruoli e fasce</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+          <button
+            onClick={() => setActiveTab('tasks')}
+            className="text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white flex items-center gap-1.5 py-1 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            <ListTodo className="w-3.5 h-3.5 text-blue-500" />
+            <span>Tutti i task ({openTasks.length})</span>
+            {urgentTasks.length > 0 && (
+              <span className="flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-orange-100 dark:bg-orange-950/80 text-orange-600 dark:text-orange-400">
+                <Flame className="w-2.5 h-2.5 fill-orange-500 text-orange-500 animate-pulse" />
+                {urgentTasks.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('config')}
+            className="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center gap-1.5 py-1 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Gestisci ruoli</span>
+          </button>
+        </div>
       </div>
+
+      {/* SPOTLIGHT: TASK URGENTI CON RISALTO (PINNED 🔥) */}
+      {urgentTasks.length > 0 && (
+        <div className="bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 dark:from-orange-950/40 dark:via-amber-950/30 dark:to-orange-950/20 border-2 border-orange-400/90 dark:border-orange-500/80 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-orange-200/80 dark:border-orange-900/60 pb-2.5">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-orange-500 text-white flex items-center justify-center shadow-xs">
+                <Flame className="w-4 h-4 fill-white animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-orange-950 dark:text-orange-100">
+                    Task Urgenti da Risolvere
+                  </h2>
+                  <span className="text-[11px] font-mono font-bold px-2 py-0.2 rounded-full bg-orange-500 text-white shadow-2xs">
+                    {urgentTasks.length} {urgentTasks.length === 1 ? 'urgente' : 'urgenti'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-orange-800/80 dark:text-orange-300/80">
+                  Attività pinned ad alta priorità su tutti i ruoli.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setActiveTab('tasks')}
+              className="text-xs font-semibold text-orange-700 dark:text-orange-300 hover:text-orange-900 dark:hover:text-white flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+            >
+              <span>Vedi tutti i {openTasks.length} task</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            {urgentTasks.map((t) => {
+              const role = roles.find((r) => r.id === t.roleId);
+              const isTimerRunningOnThisTask = Boolean(activeTimer?.taskId === t.id && (activeTimer.status === 'running' || activeTimer.status === 'paused'));
+
+              return (
+                <div
+                  key={t.id}
+                  className="p-3 bg-white/95 dark:bg-slate-900/95 border border-orange-300/80 dark:border-orange-800/80 rounded-xl flex items-center justify-between gap-3 shadow-2xs"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleTaskStatus(t.id)}
+                      title="Segna come completato"
+                      className="text-slate-300 dark:text-slate-600 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors shrink-0 cursor-pointer"
+                    >
+                      <Circle className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleTaskUrgent(t.id)}
+                      title="Rimuovi risalto urgente"
+                      className="p-1 rounded-md text-orange-500 hover:text-orange-600 bg-orange-100 dark:bg-orange-950/80 shrink-0 cursor-pointer"
+                    >
+                      <Flame className="w-3.5 h-3.5 fill-orange-500 text-orange-500" />
+                    </button>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                        {t.text}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        {role && (
+                          <span
+                            className="text-[10px] font-semibold px-1.5 py-0.2 rounded-md flex items-center gap-1 border shrink-0"
+                            style={{
+                              backgroundColor: `${role.color}15`,
+                              borderColor: `${role.color}40`,
+                              color: role.color,
+                            }}
+                          >
+                            <span
+                              className="w-1.5 h-1.5 rounded-full"
+                              style={{ backgroundColor: role.color }}
+                            />
+                            <span>{role.name}</span>
+                          </span>
+                        )}
+                        {isTimerRunningOnThisTask && (
+                          <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.2 rounded-md animate-pulse">
+                            Focus attivo
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {role && !isTimerRunningOnThisTask && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cat = t.category || 'important';
+                        const duration = role.defaultDurationMinutes || 25;
+                        startTimerForRole(role, t.text, duration, cat, t.id);
+                      }}
+                      className="px-2.5 py-1 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white rounded-lg flex items-center gap-1 transition-colors shrink-0 shadow-2xs cursor-pointer"
+                      title="Avvia subito timer su questo task"
+                    >
+                      <Play className="w-3 h-3 fill-white" />
+                      <span>Avvia Focus</span>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ROLE TABS IN CURRENT SECTION (Scheduled + Selected out-of-schedule) */}
       {displayedRoleTabs.length > 1 && (
