@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { DECISION_MODES, type DecisionMode, type Role, type RoleTask } from '../types';
 import { formatMinutesToHoursMinutes } from '../utils/timeUtils';
 import { RoleIcon } from '../utils/icons';
+import { ManualTimeModal } from '../components/ManualTimeModal';
 import {
   ListTodo,
   Flame,
@@ -46,6 +47,15 @@ export const TasksPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOrder, setSortOrder] = useState<SortOrder>('urgent_first');
   const [groupByRole, setGroupByRole] = useState(true);
+
+  // Manual Time Entry state
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [manualModalPrefill, setManualModalPrefill] = useState<{
+    roleId?: string;
+    taskId?: string;
+    taskText?: string;
+    category?: DecisionMode;
+  }>({});
 
   // Quick Add Modal / Inline state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -271,7 +281,18 @@ export const TasksPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+          <button
+            onClick={() => {
+              setManualModalPrefill({});
+              setIsManualModalOpen(true);
+            }}
+            className="px-3.5 py-2 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/60 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+          >
+            <Clock className="w-3.5 h-3.5 text-blue-500" />
+            <span>+ Tempo a Mano</span>
+          </button>
+
           <button
             onClick={() => handleOpenAddModal()}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-xs transition-colors cursor-pointer"
@@ -627,6 +648,15 @@ export const TasksPage: React.FC = () => {
                       onToggleStatus={() => toggleTaskStatus(task.id)}
                       onToggleUrgent={() => toggleTaskUrgent(task.id)}
                       onLaunchTimer={() => handleLaunchTimer(task)}
+                      onAddManualTime={() => {
+                        setManualModalPrefill({
+                          roleId: task.roleId,
+                          taskId: task.id,
+                          taskText: task.text,
+                          category: task.category,
+                        });
+                        setIsManualModalOpen(true);
+                      }}
                       onDelete={() => deleteTask(task.id)}
                       isTimerRunningOnTask={Boolean(activeTimer?.taskId === task.id && (activeTimer.status === 'running' || activeTimer.status === 'paused'))}
                       getCategoryDetails={getCategoryDetails}
@@ -656,6 +686,15 @@ export const TasksPage: React.FC = () => {
                 onToggleStatus={() => toggleTaskStatus(task.id)}
                 onToggleUrgent={() => toggleTaskUrgent(task.id)}
                 onLaunchTimer={() => handleLaunchTimer(task)}
+                onAddManualTime={() => {
+                  setManualModalPrefill({
+                    roleId: task.roleId,
+                    taskId: task.id,
+                    taskText: task.text,
+                    category: task.category,
+                  });
+                  setIsManualModalOpen(true);
+                }}
                 onDelete={() => deleteTask(task.id)}
                 isTimerRunningOnTask={Boolean(activeTimer?.taskId === task.id && (activeTimer.status === 'running' || activeTimer.status === 'paused'))}
                 getCategoryDetails={getCategoryDetails}
@@ -817,6 +856,16 @@ export const TasksPage: React.FC = () => {
         </div>
       )}
 
+      {/* Manual Time Entry Modal */}
+      <ManualTimeModal
+        isOpen={isManualModalOpen}
+        onClose={() => setIsManualModalOpen(false)}
+        initialRoleId={manualModalPrefill.roleId}
+        initialTaskId={manualModalPrefill.taskId}
+        initialTaskText={manualModalPrefill.taskText}
+        initialCategory={manualModalPrefill.category}
+      />
+
     </div>
   );
 };
@@ -833,6 +882,7 @@ interface TaskRowCardProps {
   onToggleStatus: () => void;
   onToggleUrgent: () => void;
   onLaunchTimer: () => void;
+  onAddManualTime: () => void;
   onDelete: () => void;
   isTimerRunningOnTask: boolean;
   getCategoryDetails: (cat?: DecisionMode) => {
@@ -854,6 +904,7 @@ const TaskRowCard: React.FC<TaskRowCardProps> = ({
   onToggleStatus,
   onToggleUrgent,
   onLaunchTimer,
+  onAddManualTime,
   onDelete,
   isTimerRunningOnTask,
   getCategoryDetails,
@@ -1029,6 +1080,15 @@ const TaskRowCard: React.FC<TaskRowCardProps> = ({
               <span>Avvia Focus</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={onAddManualTime}
+            title="Inserisci o registra tempo a mano per questo task"
+            className="p-1.5 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            <Clock className="w-3.5 h-3.5" />
+          </button>
 
           <button
             type="button"

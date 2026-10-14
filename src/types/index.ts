@@ -118,6 +118,7 @@ export interface TimerSession {
   startedAt: number;
   endedAt: number;
   completed: boolean;
+  isManual?: boolean; // True if manually added or attributed upon completion
   notes?: string;
 }
 

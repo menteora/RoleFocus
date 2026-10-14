@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { minutesToTimeString, isSlotActiveAtTime, getNextUpcomingSlot } from '../utils/timeUtils';
+import { minutesToTimeString, isSlotActiveAtTime, getNextUpcomingSlot, formatMinutesToHoursMinutes } from '../utils/timeUtils';
 import { RoleIcon } from '../utils/icons';
 import { ActiveTimerWidget } from '../components/ActiveTimerWidget';
 import { RoleDecisionTriad } from '../components/RoleDecisionTriad';
@@ -271,6 +271,12 @@ export const NowPage: React.FC = () => {
                         {isTimerRunningOnThisTask && (
                           <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.2 rounded-md animate-pulse">
                             Focus attivo
+                          </span>
+                        )}
+                        {(t.totalMinutesSpent || 0) > 0 && (
+                          <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.2 rounded flex items-center gap-1">
+                            <Clock className="w-2.5 h-2.5" />
+                            <span>{formatMinutesToHoursMinutes(t.totalMinutesSpent || 0)}</span>
                           </span>
                         )}
                       </div>

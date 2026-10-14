@@ -139,6 +139,16 @@ interface AppContextType {
   toggleTaskUrgent: (taskId: string) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
   deleteCompletedTasksOlderThan: (amount: number, unit: TaskCleanupUnit) => Promise<number>;
+  addManualTimeSession: (params: {
+    roleId: string;
+    taskId?: string;
+    taskText: string;
+    category?: DecisionMode;
+    durationMinutes: number;
+    dateTimestamp?: number;
+    notes?: string;
+  }) => Promise<string>;
+  updateTaskTimeSpent: (taskId: string, newTotalMinutes: number) => Promise<void>;
 
   // Theme
   theme: 'light' | 'dark' | 'system';
@@ -922,9 +932,101 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!task) return;
     playButtonTick();
     const now = Date.now();
+    const willBeCompleted = !task.completed;
+
+    if (willBeCompleted) {
+      const currentSpent = task.totalMinutesSpent || 0;
+      // Requirement: At least 5 minutes attributed if closed without timer or with < 5 minutes
+      if (currentSpent < 5) {
+        const attributedMinutes = 5 - currentSpent;
+        const role = await db.roles.get(task.roleId);
+
+        const session: TimerSession = {
+          id: `session-attr-${Date.now()}`,
+          roleId: task.roleId,
+          roleName: role?.name || 'Ruolo',
+          roleColor: role?.color || '#2563eb',
+          taskId: task.id,
+          taskText: task.text,
+          category: task.category || 'important',
+          durationMinutes: attributedMinutes,
+          startedAt: now - attributedMinutes * 60 * 1000,
+          endedAt: now,
+          completed: true,
+          isManual: true,
+          notes: 'Attribuito automaticamente alla chiusura (minimo 5 min)',
+        };
+        await db.timerSessions.add(session);
+
+        await db.tasks.update(taskId, {
+          completed: true,
+          completedAt: now,
+          totalMinutesSpent: 5,
+          sessionCount: (task.sessionCount || 0) + 1,
+        });
+        return;
+      }
+    }
+
     await db.tasks.update(taskId, {
-      completed: !task.completed,
-      completedAt: !task.completed ? now : undefined,
+      completed: willBeCompleted,
+      completedAt: willBeCompleted ? now : undefined,
+    });
+  };
+
+  const addManualTimeSession = async (params: {
+    roleId: string;
+    taskId?: string;
+    taskText: string;
+    category?: DecisionMode;
+    durationMinutes: number;
+    dateTimestamp?: number;
+    notes?: string;
+  }) => {
+    playButtonTick();
+    const now = Date.now();
+    const start = params.dateTimestamp || now;
+    const duration = Math.max(1, Math.round(params.durationMinutes));
+    const role = await db.roles.get(params.roleId);
+
+    const sessionId = `session-manual-${now}-${Math.random().toString(36).substring(2, 6)}`;
+    const session: TimerSession = {
+      id: sessionId,
+      roleId: params.roleId,
+      roleName: role?.name || 'Ruolo',
+      roleColor: role?.color || '#2563eb',
+      taskId: params.taskId || undefined,
+      taskText: params.taskText.trim() || 'Sessione manuale',
+      category: params.category || 'important',
+      durationMinutes: duration,
+      startedAt: start,
+      endedAt: start + duration * 60 * 1000,
+      completed: true,
+      isManual: true,
+      notes: params.notes?.trim() || undefined,
+    };
+
+    await db.timerSessions.add(session);
+
+    // If attached to a task, increment totalMinutesSpent
+    if (params.taskId) {
+      const task = await db.tasks.get(params.taskId);
+      if (task) {
+        await db.tasks.update(params.taskId, {
+          totalMinutesSpent: (task.totalMinutesSpent || 0) + duration,
+          sessionCount: (task.sessionCount || 0) + 1,
+        });
+      }
+    }
+
+    return sessionId;
+  };
+
+  const updateTaskTimeSpent = async (taskId: string, newTotalMinutes: number) => {
+    playButtonTick();
+    const targetMinutes = Math.max(0, Math.round(newTotalMinutes));
+    await db.tasks.update(taskId, {
+      totalMinutesSpent: targetMinutes,
     });
   };
 
@@ -1140,6 +1242,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         toggleTaskUrgent,
         deleteTask,
         deleteCompletedTasksOlderThan,
+        addManualTimeSession,
+        updateTaskTimeSpent,
         theme,
         setTheme,
         toggleTheme,

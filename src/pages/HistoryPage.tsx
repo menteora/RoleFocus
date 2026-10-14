@@ -18,36 +18,65 @@ import {
   CalendarDays,
   ListTodo,
   Sparkles,
+  Plus,
 } from 'lucide-react';
 import type { DecisionMode } from '../types';
 import { DailyStatsSection } from '../components/DailyStatsSection';
+import { ManualTimeModal } from '../components/ManualTimeModal';
 
 type HistoryViewMode = 'daily' | 'activities' | 'sessions' | 'strategy';
+type PeriodFilter = 'all' | 'today' | '7' | '30';
 
 export const HistoryPage: React.FC = () => {
   const { timerSessions, tasks, roles } = useApp();
   const [viewMode, setViewMode] = useState<HistoryViewMode>('daily');
+  const [selectedPeriodFilter, setSelectedPeriodFilter] = useState<PeriodFilter>('all');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>('all');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Filtered sessions based on role and category
+  // Manual time entry modal state
+  const [isManualModalOpen, setIsManualModalOpen] = useState<boolean>(false);
+  const [manualModalPrefill, setManualModalPrefill] = useState<{
+    roleId?: string;
+    taskId?: string;
+    taskText?: string;
+    category?: DecisionMode;
+  }>({});
+
+  const startOfToday = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }, []);
+
+  // Filtered sessions based on role, category, search, and selected period
   const filteredSessions = useMemo(() => {
+    const now = Date.now();
     return timerSessions.filter((s) => {
       if (selectedRoleFilter !== 'all' && s.roleId !== selectedRoleFilter) return false;
       if (selectedCategoryFilter !== 'all' && s.category !== selectedCategoryFilter) return false;
       if (searchQuery.trim() && !s.taskText.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+
+      // Period filter
+      if (selectedPeriodFilter === 'today') {
+        if (!s.startedAt || s.startedAt < startOfToday) return false;
+      } else if (selectedPeriodFilter === '7') {
+        if (!s.startedAt || s.startedAt < now - 7 * 86400 * 1000) return false;
+      } else if (selectedPeriodFilter === '30') {
+        if (!s.startedAt || s.startedAt < now - 30 * 86400 * 1000) return false;
+      }
       return true;
     });
-  }, [timerSessions, selectedRoleFilter, selectedCategoryFilter, searchQuery]);
+  }, [timerSessions, selectedRoleFilter, selectedCategoryFilter, searchQuery, selectedPeriodFilter, startOfToday]);
 
   // Total minutes calculations
   const totalMinutesAllTime = filteredSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
 
-  // Today's focus sessions
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const todaySessions = filteredSessions.filter((s) => s.startedAt >= startOfToday.getTime());
+  // Today's focus sessions across all filtered roles/categories
+  const todaySessions = timerSessions.filter(
+    (s) => s.startedAt && s.startedAt >= startOfToday && (selectedRoleFilter === 'all' || s.roleId === selectedRoleFilter)
+  );
   const todayMinutes = todaySessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
 
   // Aggregated activities with time spent
@@ -70,7 +99,7 @@ export const HistoryPage: React.FC = () => {
       }
     >();
 
-    // 1. First add all defined tasks in database
+    // 1. First add defined tasks in database
     for (const t of tasks) {
       const role = roles.find((r) => r.id === t.roleId);
       map.set(t.id, {
@@ -81,17 +110,20 @@ export const HistoryPage: React.FC = () => {
         roleName: role?.name || 'Ruolo non trovato',
         roleColor: role?.color || '#2563eb',
         category: t.category,
-        totalMinutes: t.totalMinutesSpent || 0,
-        sessionsCount: t.sessionCount || 0,
+        totalMinutes: selectedPeriodFilter === 'all' ? (t.totalMinutesSpent || 0) : 0,
+        sessionsCount: selectedPeriodFilter === 'all' ? (t.sessionCount || 0) : 0,
         completed: t.completed,
       });
     }
 
-    // 2. Aggregate sessions into tasks (or ad-hoc sessions)
-    for (const s of timerSessions) {
+    // 2. Aggregate sessions from filteredSessions (respecting selected period, role, category)
+    for (const s of filteredSessions) {
       if (s.taskId && map.has(s.taskId)) {
         const item = map.get(s.taskId)!;
-        // ensure last session date is tracked
+        if (selectedPeriodFilter !== 'all') {
+          item.totalMinutes += s.durationMinutes || 0;
+          item.sessionsCount += 1;
+        }
         if (!item.lastSessionDate || s.startedAt > item.lastSessionDate) {
           item.lastSessionDate = s.startedAt;
         }
@@ -104,6 +136,10 @@ export const HistoryPage: React.FC = () => {
         );
 
         if (existingEntry) {
+          if (selectedPeriodFilter !== 'all') {
+            existingEntry.totalMinutes += s.durationMinutes || 0;
+            existingEntry.sessionsCount += 1;
+          }
           if (!existingEntry.lastSessionDate || s.startedAt > existingEntry.lastSessionDate) {
             existingEntry.lastSessionDate = s.startedAt;
           }
@@ -112,7 +148,7 @@ export const HistoryPage: React.FC = () => {
           const adHocKey = `adhoc-${s.roleId}-${s.taskText.trim().toLowerCase()}`;
           if (map.has(adHocKey)) {
             const item = map.get(adHocKey)!;
-            item.totalMinutes += s.durationMinutes;
+            item.totalMinutes += s.durationMinutes || 0;
             item.sessionsCount += 1;
             if (!item.lastSessionDate || s.startedAt > item.lastSessionDate) {
               item.lastSessionDate = s.startedAt;
@@ -126,7 +162,7 @@ export const HistoryPage: React.FC = () => {
               roleName: s.roleName || role?.name || 'Senza ruolo',
               roleColor: s.roleColor || role?.color || '#2563eb',
               category: s.category || 'important',
-              totalMinutes: s.durationMinutes,
+              totalMinutes: s.durationMinutes || 0,
               sessionsCount: 1,
               completed: s.completed,
               lastSessionDate: s.startedAt,
@@ -145,6 +181,9 @@ export const HistoryPage: React.FC = () => {
     if (selectedCategoryFilter !== 'all') {
       list = list.filter((a) => a.category === selectedCategoryFilter);
     }
+    if (selectedPeriodFilter !== 'all') {
+      list = list.filter((a) => a.totalMinutes > 0);
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       list = list.filter(
@@ -156,7 +195,7 @@ export const HistoryPage: React.FC = () => {
 
     // Sort by total minutes spent descending, then by sessions count
     return list.sort((a, b) => b.totalMinutes - a.totalMinutes || b.sessionsCount - a.sessionsCount);
-  }, [tasks, timerSessions, roles, selectedRoleFilter, selectedCategoryFilter, searchQuery]);
+  }, [tasks, filteredSessions, roles, selectedRoleFilter, selectedCategoryFilter, selectedPeriodFilter, searchQuery]);
 
   // Strategy distribution breakdown
   const strategyStats = useMemo(() => {
@@ -230,15 +269,28 @@ export const HistoryPage: React.FC = () => {
           </p>
         </div>
 
-        {timerSessions.length > 0 && (
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
           <button
-            onClick={handleClearAllHistory}
-            className="text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 py-1.5 px-3 rounded-xl border border-red-200 dark:border-red-900/60 transition-colors self-start sm:self-auto flex items-center gap-1.5"
+            onClick={() => {
+              setManualModalPrefill({});
+              setIsManualModalOpen(true);
+            }}
+            className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1.5 px-3 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
           >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Svuota Storico</span>
+            <Plus className="w-3.5 h-3.5" />
+            <span>Inserisci Tempo a Mano</span>
           </button>
-        )}
+
+          {timerSessions.length > 0 && (
+            <button
+              onClick={handleClearAllHistory}
+              className="text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 py-1.5 px-3 rounded-xl border border-red-200 dark:border-red-900/60 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Svuota Storico</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Metric Overview Cards */}
@@ -341,36 +393,92 @@ export const HistoryPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Filter Badges: Roles */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-        <span className="text-xs text-slate-400 shrink-0 mr-1 flex items-center gap-1">
-          <Filter className="w-3 h-3" /> Ruolo:
-        </span>
-        <button
-          onClick={() => setSelectedRoleFilter('all')}
-          className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
-            selectedRoleFilter === 'all'
-              ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold'
-              : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
-          }`}
-        >
-          Tutti i Ruoli
-        </button>
-
-        {roles.map((r) => (
+      {/* Filter Badges: Period & Roles */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+        {/* Period Filter */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <span className="text-xs text-slate-400 shrink-0 mr-1 flex items-center gap-1">
+            <Calendar className="w-3 h-3" /> Periodo:
+          </span>
           <button
-            key={r.id}
-            onClick={() => setSelectedRoleFilter(r.id)}
-            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-              selectedRoleFilter === r.id
+            type="button"
+            onClick={() => setSelectedPeriodFilter('all')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+              selectedPeriodFilter === 'all'
+                ? 'bg-blue-600 text-white font-semibold shadow-2xs'
+                : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
+            }`}
+          >
+            Tutto lo Storico
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedPeriodFilter('today')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+              selectedPeriodFilter === 'today'
+                ? 'bg-blue-600 text-white font-semibold shadow-2xs'
+                : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
+            }`}
+          >
+            Oggi
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedPeriodFilter('7')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+              selectedPeriodFilter === '7'
+                ? 'bg-blue-600 text-white font-semibold shadow-2xs'
+                : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
+            }`}
+          >
+            Ultimi 7 gg
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedPeriodFilter('30')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+              selectedPeriodFilter === '30'
+                ? 'bg-blue-600 text-white font-semibold shadow-2xs'
+                : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
+            }`}
+          >
+            Ultimi 30 gg
+          </button>
+        </div>
+
+        {/* Roles Filter */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <span className="text-xs text-slate-400 shrink-0 mr-1 flex items-center gap-1">
+            <Filter className="w-3 h-3" /> Ruolo:
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedRoleFilter('all')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+              selectedRoleFilter === 'all'
                 ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold'
                 : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
             }`}
           >
-            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: r.color }} />
-            <span>{r.name}</span>
+            Tutti i Ruoli
           </button>
-        ))}
+
+          {roles.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => setSelectedRoleFilter(r.id)}
+              className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                selectedRoleFilter === r.id
+                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold'
+                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
+              }`}
+            >
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: r.color }} />
+              <span>{r.name}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* VIEW: DAILY STATS */}
@@ -430,7 +538,7 @@ export const HistoryPage: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Right: Time spent and session counts */}
+                      {/* Right: Time spent, session counts and + Tempo button */}
                       <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
                         <div className="text-right">
                           <div className="font-mono text-sm font-bold text-blue-600 dark:text-blue-400">
@@ -440,6 +548,23 @@ export const HistoryPage: React.FC = () => {
                             {act.sessionsCount} {act.sessionsCount === 1 ? 'sessione' : 'sessioni'}
                           </span>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setManualModalPrefill({
+                              roleId: act.roleId,
+                              taskId: act.taskId,
+                              taskText: act.taskText,
+                              category: act.category,
+                            });
+                            setIsManualModalOpen(true);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+                          title="Inserisci o aggiungi tempo manuale per questa attività"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
                       </div>
 
                     </div>
@@ -516,9 +641,21 @@ export const HistoryPage: React.FC = () => {
                           </span>
                         </div>
 
-                        <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 truncate">
-                          {session.taskText || 'Sessione Focus'}
-                        </p>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <p className="text-xs text-slate-600 dark:text-slate-300 truncate">
+                            {session.taskText || 'Sessione Focus'}
+                          </p>
+                          {session.isManual && (
+                            <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.2 rounded bg-purple-50 dark:bg-purple-950/70 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                              Manuale
+                            </span>
+                          )}
+                        </div>
+                        {session.notes && (
+                          <p className="text-[11px] text-slate-400 italic mt-0.5 truncate">
+                            Note: {session.notes}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -593,6 +730,16 @@ export const HistoryPage: React.FC = () => {
           })}
         </div>
       )}
+
+      {/* Manual Time Entry Modal */}
+      <ManualTimeModal
+        isOpen={isManualModalOpen}
+        onClose={() => setIsManualModalOpen(false)}
+        initialRoleId={manualModalPrefill.roleId}
+        initialTaskId={manualModalPrefill.taskId}
+        initialTaskText={manualModalPrefill.taskText}
+        initialCategory={manualModalPrefill.category}
+      />
 
     </div>
   );

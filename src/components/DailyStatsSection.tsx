@@ -21,7 +21,7 @@ interface DailyStatsSectionProps {
   roles: Role[];
 }
 
-type DateRangeOption = '7' | '14' | '30' | 'all';
+type DateRangeOption = 'today' | '7' | '14' | '30' | 'all';
 
 interface DayRoleBreakdown {
   roleId: string;
@@ -191,6 +191,11 @@ export const DailyStatsSection: React.FC<DailyStatsSectionProps> = ({ sessions, 
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayKey = getLocalDateKey(yesterday);
 
+    if (range === 'today') {
+      const daySessions = sessionsByDayKey.get(todayKey) || [];
+      return [compileDaySummary(today, daySessions, todayKey, yesterdayKey)];
+    }
+
     if (range === 'all') {
       // Collect all days present in sessions
       const keys = Array.from(sessionsByDayKey.keys()).sort().reverse();
@@ -347,10 +352,20 @@ export const DailyStatsSection: React.FC<DailyStatsSectionProps> = ({ sessions, 
         </div>
 
         {/* Time Window Selector */}
-        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl self-start sm:self-auto">
+        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl self-start sm:self-auto overflow-x-auto">
+          <button
+            onClick={() => setRange('today')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+              range === 'today'
+                ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            Oggi
+          </button>
           <button
             onClick={() => setRange('7')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
               range === '7'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'

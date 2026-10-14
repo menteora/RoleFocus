@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { DECISION_MODES, type DecisionMode, type Role, type RoleTask } from '../types';
 import { formatMinutesToHoursMinutes } from '../utils/timeUtils';
+import { ManualTimeModal } from './ManualTimeModal';
 import {
   Zap,
   BatteryLow,
@@ -68,6 +69,14 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
   const [newTaskText, setNewTaskText] = useState('');
   const [isNewTaskUrgent, setIsNewTaskUrgent] = useState(false);
   const [customDuration, setCustomDuration] = useState<number | null>(null);
+
+  // Manual Time Entry state
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [manualTaskPrefill, setManualTaskPrefill] = useState<{
+    taskId?: string;
+    taskText?: string;
+    category?: DecisionMode;
+  }>({});
 
   // Closed tasks accordion: compressed/collapsed by default
   const [showCompletedTasks, setShowCompletedTasks] = useState<boolean>(false);
@@ -438,9 +447,25 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
                     )}
                   </div>
 
-                  {/* Actions (Modify, Delete) */}
+                  {/* Actions (Manual Time, Modify, Delete) */}
                   {!isEditing && (
                     <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setManualTaskPrefill({
+                            taskId: task.id,
+                            taskText: task.text,
+                            category: task.category,
+                          });
+                          setIsManualModalOpen(true);
+                        }}
+                        title="Inserisci tempo manuale per questo task"
+                        className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                      >
+                        <Clock className="w-3 h-3" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleStartEditing(task)}
@@ -597,6 +622,16 @@ export const RoleDecisionTriad: React.FC<RoleDecisionTriadProps> = ({
         </div>
 
       </div>
+
+      {/* Manual Time Entry Modal */}
+      <ManualTimeModal
+        isOpen={isManualModalOpen}
+        onClose={() => setIsManualModalOpen(false)}
+        initialRoleId={role.id}
+        initialTaskId={manualTaskPrefill.taskId}
+        initialTaskText={manualTaskPrefill.taskText}
+        initialCategory={manualTaskPrefill.category}
+      />
 
     </div>
   );
