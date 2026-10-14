@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Inbox,
   Sparkles,
+  Check,
 } from 'lucide-react';
 import type { ActiveTab } from '../types';
 
@@ -35,6 +36,7 @@ export const Header: React.FC<HeaderProps> = ({
     brainDumpItems,
     settings,
     couchDBSyncState,
+    syncProgress,
   } = useApp();
 
   const unreadInboxCount = brainDumpItems.filter((i) => i.status === 'inbox').length;
@@ -112,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={onOpenImportExport}
               title={
                 isCouchEnabled
-                  ? `CouchDB Sync: ${couchDBSyncState} (clicca per configurare)`
+                  ? `CouchDB Sync: ${syncProgress?.detailedMessage || couchDBSyncState} (clicca per configurare & visualizzare i log)`
                   : 'Configura server CouchDB e Backup'
               }
               className={`px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5 ${
@@ -127,6 +129,8 @@ export const Header: React.FC<HeaderProps> = ({
             >
               {isCouchEnabled && couchDBSyncState === 'syncing' ? (
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500" />
+              ) : isCouchEnabled && couchDBSyncState === 'connected' ? (
+                <Check className="w-3.5 h-3.5 text-emerald-500" />
               ) : isCouchEnabled && couchDBSyncState === 'error' ? (
                 <AlertCircle className="w-3.5 h-3.5 text-red-500" />
               ) : (
@@ -135,11 +139,11 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="hidden sm:inline">
                 {isCouchEnabled
                   ? couchDBSyncState === 'connected'
-                    ? 'CouchDB'
+                    ? 'Sincronizzato'
                     : couchDBSyncState === 'syncing'
-                    ? 'Sync...'
+                    ? `Sync ${syncProgress?.currentStep ? `${syncProgress.currentStep}/${syncProgress.totalSteps}` : '...'}`
                     : couchDBSyncState === 'error'
-                    ? 'Sync Error'
+                    ? 'Errore Sync'
                     : 'CouchDB'
                   : 'CouchDB / Dati'}
               </span>

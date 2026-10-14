@@ -11,6 +11,9 @@ import type {
   CouchDBSyncState,
   ExportDataPayload,
   DecisionMode,
+  SyncProgressInfo,
+  SyncCollectionStatus,
+  SyncLogEntry,
 } from '../types';
 
 // Safely resolve PouchDB constructor for browser environments
@@ -18,6 +21,11 @@ const PouchDB: typeof PouchDBBrowser =
   (PouchDBBrowser as unknown as { default?: typeof PouchDBBrowser }).default || PouchDBBrowser;
 
 type Listener = () => void;
+let globalMutationNotifier: (() => void) | null = null;
+
+export function registerGlobalMutationNotifier(fn: () => void) {
+  globalMutationNotifier = fn;
+}
 
 interface PouchDoc<T> {
   _id: string;
@@ -56,6 +64,13 @@ export class PouchCollection<T extends { id: string }> {
         listener();
       } catch (err) {
         console.error('Error in PouchDB subscriber:', err);
+      }
+    }
+    if (globalMutationNotifier) {
+      try {
+        globalMutationNotifier();
+      } catch {
+        // ignore
       }
     }
   }
@@ -219,6 +234,8 @@ function buildRemoteUrl(endpoint: string, dbName: string): string {
   return `${cleanEndpoint}/${dbName}`;
 }
 
+const verifiedRemoteDatabases = new Set<string>();
+
 async function ensureRemoteDatabaseExists(
   endpoint: string,
   dbName: string,
@@ -226,6 +243,11 @@ async function ensureRemoteDatabaseExists(
 ): Promise<void> {
   const cleanEndpoint = endpoint.trim().replace(/\/+$/, '');
   const url = `${cleanEndpoint}/${dbName}`;
+
+  if (verifiedRemoteDatabases.has(url)) {
+    return;
+  }
+
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'X-Requested-With': 'XMLHttpRequest',
@@ -239,6 +261,9 @@ async function ensureRemoteDatabaseExists(
     if (headRes.status === 404) {
       // Database does not exist yet on server; attempt creation with full credentials
       await fetch(url, { method: 'PUT', headers });
+    }
+    if (headRes.ok || headRes.status === 404) {
+      verifiedRemoteDatabases.add(url);
     }
   } catch {
     // Network or CORS errors will be captured by replication handler
@@ -360,11 +385,98 @@ export async function testCouchDBConnection(
   }
 }
 
+export const SYNC_COLLECTIONS_DEF = [
+  { key: 'roles', suffix: 'roles', label: 'Ruoli' },
+  { key: 'slots', suffix: 'slots', label: 'Fasce Orarie' },
+  { key: 'tasks', suffix: 'tasks', label: 'Attività' },
+  { key: 'sessions', suffix: 'sessions', label: 'Sessioni Timer' },
+  { key: 'timer', suffix: 'timer', label: 'Timer Attivo' },
+  { key: 'braindump', suffix: 'braindump', label: 'Brain Dump' },
+  { key: 'settings', suffix: 'settings', label: 'Impostazioni' },
+] as const;
+
+function getPouchCollectionByKey(key: typeof SYNC_COLLECTIONS_DEF[number]['key']) {
+  switch (key) {
+    case 'roles': return db.roles;
+    case 'slots': return db.timeSlots;
+    case 'tasks': return db.tasks;
+    case 'sessions': return db.timerSessions;
+    case 'timer': return db.activeTimer;
+    case 'braindump': return db.brainDump;
+    case 'settings': return db.settings;
+  }
+}
+
 export class CouchDBSyncManager {
   private activeSyncs: any[] = [];
   private syncState: CouchDBSyncState = 'disconnected';
   private lastError?: string;
   private stateListeners: Set<(state: CouchDBSyncState, err?: string) => void> = new Set();
+  private progressListeners: Set<(progress: SyncProgressInfo) => void> = new Set();
+  private currentConfig?: CouchDBSettings;
+  private isSyncing = false;
+  private smartSyncTimer: any = null;
+  private periodicInterval: any = null;
+  private visibilityListener?: () => void;
+  private progress: SyncProgressInfo;
+
+  constructor() {
+    this.progress = {
+      state: 'disconnected',
+      detailedMessage: 'Sincronizzazione non attiva',
+      currentStep: 0,
+      totalSteps: SYNC_COLLECTIONS_DEF.length,
+      percent: 0,
+      collections: this.buildInitialCollectionStatuses('rolefocus_'),
+      logs: [
+        {
+          id: 'init',
+          timestamp: Date.now(),
+          type: 'info',
+          message: 'Motore di sincronizzazione pronto',
+        },
+      ],
+    };
+  }
+
+  private buildInitialCollectionStatuses(prefix: string): Record<string, SyncCollectionStatus> {
+    const res: Record<string, SyncCollectionStatus> = {};
+    for (const def of SYNC_COLLECTIONS_DEF) {
+      res[def.key] = {
+        key: def.key,
+        name: `${prefix}${def.suffix}`,
+        label: def.label,
+        status: 'idle',
+        docsRead: 0,
+        docsWritten: 0,
+      };
+    }
+    return res;
+  }
+
+  private addLog(type: SyncLogEntry['type'], message: string) {
+    const entry: SyncLogEntry = {
+      id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      timestamp: Date.now(),
+      type,
+      message,
+    };
+    this.progress.logs = [entry, ...this.progress.logs].slice(0, 30);
+  }
+
+  private notifyProgress() {
+    for (const l of this.progressListeners) {
+      try {
+        l({
+          ...this.progress,
+          collections: { ...this.progress.collections },
+          logs: [...this.progress.logs],
+        });
+      } catch (err) {
+        console.error('Progress listener error:', err);
+      }
+    }
+  }
 
   public subscribeState(listener: (state: CouchDBSyncState, err?: string) => void) {
     this.stateListeners.add(listener);
@@ -372,9 +484,21 @@ export class CouchDBSyncManager {
     return () => this.stateListeners.delete(listener);
   }
 
+  public subscribeProgress(listener: (progress: SyncProgressInfo) => void): () => void {
+    this.progressListeners.add(listener);
+    listener({
+      ...this.progress,
+      collections: { ...this.progress.collections },
+      logs: [...this.progress.logs],
+    });
+    return () => this.progressListeners.delete(listener);
+  }
+
   private notifyState(state: CouchDBSyncState, err?: string) {
     this.syncState = state;
     this.lastError = err;
+    this.progress.state = state;
+    if (err) this.progress.detailedMessage = err;
     for (const l of this.stateListeners) {
       try {
         l(state, err);
@@ -382,13 +506,39 @@ export class CouchDBSyncManager {
         console.error('Sync listener error:', e);
       }
     }
+    this.notifyProgress();
   }
 
   public getState() {
     return { state: this.syncState, error: this.lastError };
   }
 
+  public getProgress(): SyncProgressInfo {
+    return {
+      ...this.progress,
+      collections: { ...this.progress.collections },
+      logs: [...this.progress.logs],
+    };
+  }
+
+  public clearLogs() {
+    this.progress.logs = [];
+    this.notifyProgress();
+  }
+
   public stopLiveSync() {
+    if (this.smartSyncTimer) {
+      clearTimeout(this.smartSyncTimer);
+      this.smartSyncTimer = null;
+    }
+    if (this.periodicInterval) {
+      clearInterval(this.periodicInterval);
+      this.periodicInterval = null;
+    }
+    if (this.visibilityListener) {
+      document.removeEventListener('visibilitychange', this.visibilityListener);
+      this.visibilityListener = undefined;
+    }
     for (const s of this.activeSyncs) {
       try {
         s.cancel();
@@ -397,7 +547,10 @@ export class CouchDBSyncManager {
       }
     }
     this.activeSyncs = [];
+    this.isSyncing = false;
     this.notifyState('disconnected');
+    this.progress.detailedMessage = 'Sincronizzazione disconnessa';
+    this.notifyProgress();
   }
 
   public async syncOnce(config: CouchDBSettings): Promise<{ success: boolean; message: string }> {
@@ -405,38 +558,128 @@ export class CouchDBSyncManager {
       return { success: false, message: 'CouchDB non configurato o disabilitato' };
     }
 
-    this.notifyState('syncing');
+    if (this.isSyncing) {
+      return { success: true, message: 'Sincronizzazione già in corso...' };
+    }
+
+    this.isSyncing = true;
+    const startTime = performance.now();
     const prefix = config.databasePrefix?.trim() || 'rolefocus_';
     const auth = config.username ? { username: config.username, password: config.password } : undefined;
 
-    const collections = [
-      { name: `${prefix}roles`, col: db.roles },
-      { name: `${prefix}slots`, col: db.timeSlots },
-      { name: `${prefix}tasks`, col: db.tasks },
-      { name: `${prefix}sessions`, col: db.timerSessions },
-      { name: `${prefix}timer`, col: db.activeTimer },
-      { name: `${prefix}braindump`, col: db.brainDump },
-      { name: `${prefix}settings`, col: db.settings },
-    ];
+    this.notifyState('syncing');
+    this.progress.detailedMessage = 'Verifica connessione e database CouchDB...';
+    this.progress.currentStep = 0;
+    this.progress.totalSteps = SYNC_COLLECTIONS_DEF.length;
+    this.progress.percent = 5;
+    this.addLog('info', `Avvio sincronizzazione con server ${config.endpoint}`);
+    this.notifyProgress();
+
+    // Prepare collection statuses
+    for (const def of SYNC_COLLECTIONS_DEF) {
+      this.progress.collections[def.key] = {
+        key: def.key,
+        name: `${prefix}${def.suffix}`,
+        label: def.label,
+        status: 'syncing',
+        docsRead: 0,
+        docsWritten: 0,
+      };
+    }
+    this.notifyProgress();
 
     try {
-      for (const item of collections) {
-        await ensureRemoteDatabaseExists(config.endpoint, item.name, auth);
-        const remoteDb = createRemoteDb(config.endpoint, item.name, auth);
-        await item.col.getRawDB().sync(remoteDb);
+      // 1. Parallel verification of remote databases (cached)
+      await Promise.all(
+        SYNC_COLLECTIONS_DEF.map((def) =>
+          ensureRemoteDatabaseExists(config.endpoint, `${prefix}${def.suffix}`, auth)
+        )
+      );
+
+      let totalRead = 0;
+      let totalWritten = 0;
+
+      // 2. Sequential execution of collections with granular real-time feedback
+      for (let i = 0; i < SYNC_COLLECTIONS_DEF.length; i++) {
+        const def = SYNC_COLLECTIONS_DEF[i];
+        const dbName = `${prefix}${def.suffix}`;
+        const col = getPouchCollectionByKey(def.key);
+
+        this.progress.currentStep = i + 1;
+        this.progress.percent = Math.round(((i + 1) / (SYNC_COLLECTIONS_DEF.length + 1)) * 100);
+        this.progress.detailedMessage = `Sincronizzazione ${def.label} (${i + 1}/${SYNC_COLLECTIONS_DEF.length})...`;
+        this.notifyProgress();
+
+        try {
+          const remoteDb = createRemoteDb(config.endpoint, dbName, auth);
+          const rawDb = col.getRawDB();
+
+          // Execute bidirectional sync (PULL from remote, PUSH from local)
+          const syncResult: any = await rawDb.sync(remoteDb);
+
+          const docsRead = (syncResult?.pull?.docs_written ?? 0) + (syncResult?.pull?.docs_read ?? 0);
+          const docsWritten = (syncResult?.push?.docs_written ?? 0);
+
+          totalRead += docsRead;
+          totalWritten += docsWritten;
+
+          this.progress.collections[def.key] = {
+            ...this.progress.collections[def.key],
+            status: 'ok',
+            docsRead,
+            docsWritten,
+            lastUpdated: Date.now(),
+          };
+
+          if (docsRead > 0 || docsWritten > 0) {
+            this.addLog('success', `${def.label}: scaricati ${docsRead}, caricati ${docsWritten}`);
+          }
+        } catch (itemErr: any) {
+          const errMsg = itemErr.message || 'Errore sincronizzazione';
+          this.progress.collections[def.key] = {
+            ...this.progress.collections[def.key],
+            status: 'error',
+            lastError: errMsg,
+          };
+          this.addLog('warn', `${def.label}: errore - ${errMsg}`);
+          // Don't abort completely; allow other collections to continue
+        }
+        this.notifyProgress();
       }
+
+      const durationMs = Math.round(performance.now() - startTime);
+      this.progress.lastSyncDurationMs = durationMs;
+      this.progress.percent = 100;
+      this.progress.detailedMessage = `Sincronizzato in ${durationMs}ms (Scaricati: ${totalRead}, Caricati: ${totalWritten})`;
+      this.addLog(
+        'success',
+        `Sincronizzazione completata con successo in ${durationMs}ms ✓ (Scaricati: ${totalRead}, Caricati: ${totalWritten})`
+      );
+
       this.notifyState('connected');
-      return { success: true, message: 'Sincronizzazione completata con successo.' };
+      this.progress.state = 'connected';
+      this.notifyProgress();
+
+      return {
+        success: true,
+        message: `Sincronizzazione completata in ${durationMs}ms (${totalRead} scaricati, ${totalWritten} caricati).`,
+      };
     } catch (err: any) {
       const errMsg = err.message || 'Errore durante la sincronizzazione';
       this.notifyState('error', errMsg);
+      this.progress.state = 'error';
+      this.progress.detailedMessage = `Errore: ${errMsg}`;
+      this.addLog('error', `Errore sync: ${errMsg}`);
+      this.notifyProgress();
       return { success: false, message: errMsg };
+    } finally {
+      this.isSyncing = false;
     }
   }
 
   public async startLiveSync(config: CouchDBSettings): Promise<() => void> {
-    // 1. Cancel and cleanup any previously active syncs before starting a new one
     this.stopLiveSync();
+    this.currentConfig = config;
 
     if (!config.enabled || !config.endpoint || !config.autoSync) {
       return () => {
@@ -444,64 +687,142 @@ export class CouchDBSyncManager {
       };
     }
 
+    const mode = config.syncMode || 'smart';
+
+    if (mode === 'smart') {
+      // SMART MODE (Recommended):
+      // 1. Initial fast sync
+      this.addLog('info', 'Attivata modalità Sincronizzazione Intelligente (su modifica & all\'avvio)');
+      this.syncOnce(config).catch(() => {});
+
+      // 2. Periodic gentle sync every 45 seconds (checks remote changes if app is idle)
+      this.periodicInterval = setInterval(() => {
+        if (!this.isSyncing && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+          this.syncOnce(config).catch(() => {});
+        }
+      }, 45000);
+
+      // 3. Tab visibility listener: when tab becomes active, sync immediately
+      if (typeof document !== 'undefined') {
+        this.visibilityListener = () => {
+          if (document.visibilityState === 'visible' && !this.isSyncing) {
+            this.addLog('info', 'Scheda riattivata: sincronizzazione rapida...');
+            this.syncOnce(config).catch(() => {});
+          }
+        };
+        document.addEventListener('visibilitychange', this.visibilityListener);
+      }
+
+      return () => {
+        this.stopLiveSync();
+      };
+    }
+
+    // LIVE MODE (Continuous WebSocket/Long-polling Replications):
     this.notifyState('connecting');
+    this.progress.state = 'connecting';
+    this.progress.detailedMessage = 'Avvio replicazione live continua CouchDB...';
+    this.addLog('info', 'Avvio replicazione live continua CouchDB...');
+    this.notifyProgress();
+
     const prefix = config.databasePrefix?.trim() || 'rolefocus_';
     const auth = config.username ? { username: config.username, password: config.password } : undefined;
 
-    const collections = [
-      { name: `${prefix}roles`, col: db.roles },
-      { name: `${prefix}slots`, col: db.timeSlots },
-      { name: `${prefix}tasks`, col: db.tasks },
-      { name: `${prefix}sessions`, col: db.timerSessions },
-      { name: `${prefix}timer`, col: db.activeTimer },
-      { name: `${prefix}braindump`, col: db.brainDump },
-      { name: `${prefix}settings`, col: db.settings },
-    ];
-
     try {
-      for (const item of collections) {
-        await ensureRemoteDatabaseExists(config.endpoint, item.name, auth);
-        const remoteDb = createRemoteDb(config.endpoint, item.name, auth);
+      await Promise.all(
+        SYNC_COLLECTIONS_DEF.map((def) =>
+          ensureRemoteDatabaseExists(config.endpoint, `${prefix}${def.suffix}`, auth)
+        )
+      );
 
-        // Save the result of local.sync(remote, {...}) into a variable
-        const sync = item.col.getRawDB().sync(remoteDb, {
+      for (const def of SYNC_COLLECTIONS_DEF) {
+        const dbName = `${prefix}${def.suffix}`;
+        const col = getPouchCollectionByKey(def.key);
+        const remoteDb = createRemoteDb(config.endpoint, dbName, auth);
+
+        const sync = col.getRawDB().sync(remoteDb, {
           live: true,
           retry: true,
+          batch_size: 20,
+          batches_limit: 2,
         });
 
         sync
-          .on('change', () => {
-            this.notifyState('syncing');
-            setTimeout(() => this.notifyState('connected'), 1000);
+          .on('change', (info: any) => {
+            const docsCount = info?.change?.docs?.length || 0;
+            if (docsCount > 0) {
+              this.notifyState('syncing');
+              this.progress.state = 'syncing';
+              this.progress.detailedMessage = `Ricevute ${docsCount} modifiche (${def.label})`;
+              this.addLog('info', `Modifica live rilevata su ${def.label} (${docsCount} doc)`);
+              this.notifyProgress();
+              setTimeout(() => {
+                this.notifyState('connected');
+                this.progress.state = 'connected';
+                this.progress.detailedMessage = 'Connesso & Sincronizzato (Live)';
+                this.notifyProgress();
+              }, 1200);
+            }
           })
           .on('paused', (info: any) => {
             if (info) {
               this.notifyState('connected');
+              this.progress.state = 'connected';
+              this.progress.detailedMessage = 'Connesso & Sincronizzato (Live)';
+              this.notifyProgress();
             }
           })
           .on('active', () => {
-            this.notifyState('syncing');
+            // Heartbeat/active: don't flash "syncing" unless docs are transferring
           })
           .on('error', (err: any) => {
-            console.error(`Sync error on ${item.name}:`, err);
-            this.notifyState('error', err.message || 'Errore di sincronizzazione CouchDB');
+            console.error(`Sync error on ${def.label}:`, err);
+            const msg = err.message || 'Errore live sync';
+            this.addLog('error', `Errore live sync su ${def.label}: ${msg}`);
+            this.notifyState('error', msg);
+            this.progress.state = 'error';
+            this.progress.detailedMessage = `Errore su ${def.label}: ${msg}`;
+            this.notifyProgress();
           });
 
         this.activeSyncs.push(sync);
       }
+
       this.notifyState('connected');
+      this.progress.state = 'connected';
+      this.progress.detailedMessage = 'Connesso & Sincronizzato (Live)';
+      this.addLog('success', 'Tutte le 7 replicazioni live collegate con successo ✓');
+      this.notifyProgress();
     } catch (err: any) {
-      this.notifyState('error', err.message || 'Errore di avvio sincronizzazione');
+      const msg = err.message || 'Errore di avvio sincronizzazione';
+      this.notifyState('error', msg);
+      this.progress.state = 'error';
+      this.progress.detailedMessage = msg;
+      this.addLog('error', `Errore avvio live sync: ${msg}`);
+      this.notifyProgress();
     }
 
-    // Return cleanup function to cancel all active replications
     return () => {
       this.stopLiveSync();
     };
   }
+
+  public triggerSmartSync() {
+    if (!this.currentConfig || !this.currentConfig.enabled || !this.currentConfig.autoSync) return;
+    if (this.currentConfig.syncMode === 'live') return; // live mode handles replication continuously
+    if (this.smartSyncTimer) clearTimeout(this.smartSyncTimer);
+    this.smartSyncTimer = setTimeout(() => {
+      this.syncOnce(this.currentConfig!).catch(() => {});
+    }, 1200);
+  }
 }
 
 export const syncManager = new CouchDBSyncManager();
+
+// Automatically trigger debounced smart sync whenever local documents mutate
+registerGlobalMutationNotifier(() => {
+  syncManager.triggerSmartSync();
+});
 
 // Initialize basic settings and active timer structures without injecting hardcoded roles
 export async function seedInitialDataIfNeeded(): Promise<void> {

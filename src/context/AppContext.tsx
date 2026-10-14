@@ -20,6 +20,7 @@ import type {
   AppSettings,
   CouchDBSettings,
   CouchDBSyncState,
+  SyncProgressInfo,
   ActiveTab,
   ExportDataPayload,
   DecisionMode,
@@ -64,6 +65,8 @@ interface AppContextType {
   // CouchDB Sync
   couchDBSyncState: CouchDBSyncState;
   couchDBSyncError?: string;
+  syncProgress: SyncProgressInfo;
+  clearSyncLogs: () => void;
   updateCouchDBSettings: (couchSettings: Partial<CouchDBSettings>) => Promise<void>;
   testCouchDB: (customConfig?: CouchDBSettings) => Promise<{ success: boolean; message: string; version?: string }>;
   syncCouchDBNow: () => Promise<{ success: boolean; message: string }>;
@@ -153,6 +156,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // CouchDB Sync State
   const [couchDBSyncState, setCouchDBSyncState] = useState<CouchDBSyncState>('disconnected');
   const [couchDBSyncError, setCouchDBSyncError] = useState<string | undefined>(undefined);
+  const [syncProgress, setSyncProgress] = useState<SyncProgressInfo>(() => syncManager.getProgress());
 
   // PouchDB Data State
   const [roles, setRoles] = useState<Role[]>([]);
@@ -249,6 +253,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
+    const unsubProgress = syncManager.subscribeProgress((prog) => {
+      if (!unmounted) {
+        setSyncProgress(prog);
+      }
+    });
+
     return () => {
       unmounted = true;
       unsubRoles();
@@ -259,6 +269,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubActiveTimer();
       unsubSettings();
       unsubSync();
+      unsubProgress();
     };
   }, [refreshAllData]);
 
@@ -279,6 +290,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           password: '',
           databasePrefix: 'rolefocus_',
           autoSync: true,
+          syncMode: 'smart',
         },
       }
     );
@@ -291,8 +303,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const couchPassword = settings.couchdb?.password || '';
   const couchPrefix = settings.couchdb?.databasePrefix || 'rolefocus_';
   const couchAutoSync = Boolean(settings.couchdb?.autoSync);
+  const couchSyncMode = settings.couchdb?.syncMode || 'smart';
 
-  // Handle CouchDB Live Sync with stable dependencies and proper cleanup (.cancel())
+  // Handle CouchDB Live / Smart Sync with stable dependencies and proper cleanup (.cancel())
   useEffect(() => {
     let active = true;
 
@@ -304,6 +317,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         password: couchPassword,
         databasePrefix: couchPrefix,
         autoSync: couchAutoSync,
+        syncMode: couchSyncMode,
       };
 
       syncManager.startLiveSync(syncConfig).then((cancelFn) => {
@@ -320,7 +334,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       active = false;
       syncManager.stopLiveSync();
     };
-  }, [couchEnabled, couchEndpoint, couchUsername, couchPassword, couchPrefix, couchAutoSync]);
+  }, [couchEnabled, couchEndpoint, couchUsername, couchPassword, couchPrefix, couchAutoSync, couchSyncMode]);
 
   // CouchDB Actions
   const updateCouchDBSettings = async (partial: Partial<CouchDBSettings>) => {
@@ -362,6 +376,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     return res;
   };
+
+  const clearSyncLogs = useCallback(() => {
+    syncManager.clearLogs();
+  }, []);
 
   // Real-time clock update
   useEffect(() => {
@@ -1032,6 +1050,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setSelectedFocusRoleId,
         couchDBSyncState,
         couchDBSyncError,
+        syncProgress,
+        clearSyncLogs,
         updateCouchDBSettings,
         testCouchDB,
         syncCouchDBNow,

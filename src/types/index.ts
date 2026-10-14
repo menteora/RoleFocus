@@ -138,6 +138,35 @@ export interface ActiveTimerData {
 
 export type CouchDBSyncState = 'disconnected' | 'connecting' | 'connected' | 'syncing' | 'error';
 
+export interface SyncLogEntry {
+  id: string;
+  timestamp: number;
+  type: 'info' | 'success' | 'warn' | 'error';
+  message: string;
+}
+
+export interface SyncCollectionStatus {
+  key: string;
+  name: string;
+  label: string;
+  status: 'idle' | 'syncing' | 'ok' | 'error';
+  docsRead: number;
+  docsWritten: number;
+  lastUpdated?: number;
+  lastError?: string;
+}
+
+export interface SyncProgressInfo {
+  state: CouchDBSyncState;
+  detailedMessage: string;
+  currentStep: number;
+  totalSteps: number;
+  percent: number;
+  lastSyncDurationMs?: number;
+  collections: Record<string, SyncCollectionStatus>;
+  logs: SyncLogEntry[];
+}
+
 export interface CouchDBSettings {
   enabled: boolean;
   endpoint: string; // e.g. "http://localhost:5984" or "https://couchdb.example.com"
@@ -145,6 +174,7 @@ export interface CouchDBSettings {
   password?: string;
   databasePrefix?: string; // e.g. "rolefocus_"
   autoSync: boolean;
+  syncMode?: 'smart' | 'live'; // 'smart' = on-change + on-start (fast, solid, avoids browser 6-socket block); 'live' = continuous long-polling
   lastSyncTimestamp?: number;
   lastError?: string;
 }
