@@ -8,6 +8,9 @@ import {
   resetDatabaseToDefault,
   syncManager,
   testCouchDBConnection,
+  initializeRemoteDatabases,
+  checkRemoteDatabases,
+  RemoteDatabaseInfo,
 } from '../db/db';
 import type {
   Role,
@@ -68,8 +71,23 @@ interface AppContextType {
   syncProgress: SyncProgressInfo;
   clearSyncLogs: () => void;
   updateCouchDBSettings: (couchSettings: Partial<CouchDBSettings>) => Promise<void>;
-  testCouchDB: (customConfig?: CouchDBSettings) => Promise<{ success: boolean; message: string; version?: string }>;
+  testCouchDB: (customConfig?: CouchDBSettings) => Promise<{
+    success: boolean;
+    message: string;
+    version?: string;
+    databases?: RemoteDatabaseInfo[];
+    missingDatabasesCount?: number;
+  }>;
   syncCouchDBNow: () => Promise<{ success: boolean; message: string }>;
+  initCouchDBDatabases: (customConfig?: CouchDBSettings) => Promise<{
+    success: boolean;
+    message: string;
+    databases: RemoteDatabaseInfo[];
+    createdCount: number;
+    existingCount: number;
+    failedCount: number;
+  }>;
+  checkCouchDBDatabases: (customConfig?: CouchDBSettings) => Promise<RemoteDatabaseInfo[]>;
 
   // Active Timer
   activeTimer: ActiveTimerData | null;
@@ -375,6 +393,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await updateCouchDBSettings({ lastError: res.message });
     }
     return res;
+  };
+
+  const initCouchDBDatabases = async (customConfig?: CouchDBSettings) => {
+    const configToUse = customConfig || settings.couchdb || {
+      enabled: false,
+      endpoint: '',
+      username: '',
+      password: '',
+      databasePrefix: 'rolefocus_',
+      autoSync: true,
+    };
+    return await initializeRemoteDatabases(configToUse);
+  };
+
+  const checkCouchDBDatabases = async (customConfig?: CouchDBSettings) => {
+    const configToUse = customConfig || settings.couchdb || {
+      enabled: false,
+      endpoint: '',
+      username: '',
+      password: '',
+      databasePrefix: 'rolefocus_',
+      autoSync: true,
+    };
+    return await checkRemoteDatabases(configToUse);
   };
 
   const clearSyncLogs = useCallback(() => {
@@ -1055,6 +1097,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updateCouchDBSettings,
         testCouchDB,
         syncCouchDBNow,
+        initCouchDBDatabases,
+        checkCouchDBDatabases,
         activeTimer,
         startTimerForRole,
         pauseTimer,

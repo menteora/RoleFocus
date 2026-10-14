@@ -236,16 +236,24 @@ function buildRemoteUrl(endpoint: string, dbName: string): string {
 
 const verifiedRemoteDatabases = new Set<string>();
 
+export interface RemoteDatabaseInfo {
+  key: string;
+  name: string;
+  label: string;
+  exists: boolean;
+  statusText: string;
+}
+
 async function ensureRemoteDatabaseExists(
   endpoint: string,
   dbName: string,
   auth?: { username?: string; password?: string }
-): Promise<void> {
+): Promise<boolean> {
   const cleanEndpoint = endpoint.trim().replace(/\/+$/, '');
   const url = `${cleanEndpoint}/${dbName}`;
 
   if (verifiedRemoteDatabases.has(url)) {
-    return;
+    return true;
   }
 
   const headers: Record<string, string> = {
@@ -258,16 +266,209 @@ async function ensureRemoteDatabaseExists(
 
   try {
     const headRes = await fetch(url, { method: 'HEAD', headers });
-    if (headRes.status === 404) {
-      // Database does not exist yet on server; attempt creation with full credentials
-      await fetch(url, { method: 'PUT', headers });
-    }
-    if (headRes.ok || headRes.status === 404) {
+    if (headRes.ok) {
       verifiedRemoteDatabases.add(url);
+      return true;
     }
+    if (headRes.status === 404) {
+      // Database does not exist yet on server; attempt creation with credentials
+      const putRes = await fetch(url, { method: 'PUT', headers });
+      if (putRes.ok || putRes.status === 201 || putRes.status === 412) {
+        verifiedRemoteDatabases.add(url);
+        return true;
+      }
+      return false;
+    }
+    return false;
   } catch {
-    // Network or CORS errors will be captured by replication handler
+    // Network or CORS errors
+    return false;
   }
+}
+
+export async function checkRemoteDatabases(
+  config: CouchDBSettings
+): Promise<RemoteDatabaseInfo[]> {
+  if (!config.endpoint || !config.endpoint.trim()) return [];
+
+  const cleanEndpoint = config.endpoint.trim().replace(/\/+$/, '');
+  const prefix = config.databasePrefix?.trim() || 'rolefocus_';
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+  };
+  if (config.username) {
+    headers['Authorization'] = `Basic ${btoa(`${config.username}:${config.password || ''}`)}`;
+  }
+
+  return await Promise.all(
+    SYNC_COLLECTIONS_DEF.map(async (def) => {
+      const dbName = `${prefix}${def.suffix}`;
+      const url = `${cleanEndpoint}/${dbName}`;
+      try {
+        const headRes = await fetch(url, { method: 'HEAD', headers });
+        if (headRes.ok) {
+          verifiedRemoteDatabases.add(url);
+          return {
+            key: def.key,
+            name: dbName,
+            label: def.label,
+            exists: true,
+            statusText: 'Presente su CouchDB ✓',
+          };
+        } else if (headRes.status === 404) {
+          return {
+            key: def.key,
+            name: dbName,
+            label: def.label,
+            exists: false,
+            statusText: 'Non esiste sul server (da creare)',
+          };
+        } else {
+          return {
+            key: def.key,
+            name: dbName,
+            label: def.label,
+            exists: false,
+            statusText: `Stato HTTP ${headRes.status}`,
+          };
+        }
+      } catch {
+        return {
+          key: def.key,
+          name: dbName,
+          label: def.label,
+          exists: false,
+          statusText: 'Non raggiungibile (CORS o rete)',
+        };
+      }
+    })
+  );
+}
+
+export async function initializeRemoteDatabases(
+  config: CouchDBSettings
+): Promise<{
+  success: boolean;
+  message: string;
+  databases: RemoteDatabaseInfo[];
+  createdCount: number;
+  existingCount: number;
+  failedCount: number;
+}> {
+  if (!config.endpoint || !config.endpoint.trim()) {
+    return {
+      success: false,
+      message: 'Endpoint CouchDB mancante',
+      databases: [],
+      createdCount: 0,
+      existingCount: 0,
+      failedCount: 0,
+    };
+  }
+
+  const cleanEndpoint = config.endpoint.trim().replace(/\/+$/, '');
+  const prefix = config.databasePrefix?.trim() || 'rolefocus_';
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+  };
+  if (config.username) {
+    headers['Authorization'] = `Basic ${btoa(`${config.username}:${config.password || ''}`)}`;
+  }
+
+  let createdCount = 0;
+  let existingCount = 0;
+  let failedCount = 0;
+  const results: RemoteDatabaseInfo[] = [];
+
+  for (const def of SYNC_COLLECTIONS_DEF) {
+    const dbName = `${prefix}${def.suffix}`;
+    const url = `${cleanEndpoint}/${dbName}`;
+
+    try {
+      const headRes = await fetch(url, { method: 'HEAD', headers });
+      if (headRes.ok) {
+        existingCount++;
+        verifiedRemoteDatabases.add(url);
+        results.push({
+          key: def.key,
+          name: dbName,
+          label: def.label,
+          exists: true,
+          statusText: 'Già presente sul server ✓',
+        });
+        continue;
+      }
+
+      if (headRes.status === 404) {
+        const putRes = await fetch(url, { method: 'PUT', headers });
+        if (putRes.ok || putRes.status === 201 || putRes.status === 412) {
+          createdCount++;
+          verifiedRemoteDatabases.add(url);
+          results.push({
+            key: def.key,
+            name: dbName,
+            label: def.label,
+            exists: true,
+            statusText: 'Creato ora con successo! ✓',
+          });
+        } else {
+          failedCount++;
+          const errJson = await putRes.json().catch(() => ({}));
+          const reason =
+            putRes.status === 401 || putRes.status === 403
+              ? 'Permesso negato: solo un utente amministratore CouchDB (_admin) può creare database via API'
+              : errJson.reason || `HTTP ${putRes.status}`;
+          results.push({
+            key: def.key,
+            name: dbName,
+            label: def.label,
+            exists: false,
+            statusText: `Creazione fallita (${reason})`,
+          });
+        }
+      } else {
+        failedCount++;
+        results.push({
+          key: def.key,
+          name: dbName,
+          label: def.label,
+          exists: false,
+          statusText: `Errore verifica: HTTP ${headRes.status}`,
+        });
+      }
+    } catch {
+      failedCount++;
+      results.push({
+        key: def.key,
+        name: dbName,
+        label: def.label,
+        exists: false,
+        statusText: 'Errore di rete o CORS',
+      });
+    }
+  }
+
+  const allReady = failedCount === 0;
+  let message = '';
+  if (allReady) {
+    message =
+      createdCount > 0
+        ? `Operazione completata! Creati ${createdCount} database su CouchDB (${existingCount} già presenti). Tutti i 7 database sono pronti.`
+        : `Tutti i 7 database esistono già su CouchDB e sono pronti!`;
+  } else {
+    message = `Creazione automatica completata parzialmente: ${createdCount} creati, ${existingCount} esistenti, ${failedCount} non creati (permesso negato su CouchDB o CORS). Vanno creati manualmente su Fauxton o via curl.`;
+  }
+
+  return {
+    success: allReady,
+    message,
+    databases: results,
+    createdCount,
+    existingCount,
+    failedCount,
+  };
 }
 
 function createRemoteDb<T extends {} = {}>(
@@ -319,7 +520,13 @@ function createRemoteDb<T extends {} = {}>(
 
 export async function testCouchDBConnection(
   config: CouchDBSettings
-): Promise<{ success: boolean; message: string; version?: string }> {
+): Promise<{
+  success: boolean;
+  message: string;
+  version?: string;
+  databases?: RemoteDatabaseInfo[];
+  missingDatabasesCount?: number;
+}> {
   if (!config.endpoint || !config.endpoint.trim()) {
     return { success: false, message: 'Endpoint URL obbligatorio (es. http://localhost:5984)' };
   }
@@ -350,32 +557,29 @@ export async function testCouchDBConnection(
 
     const data = await res.json();
     
-    // Check session info if username provided
+    // Check database statuses on CouchDB
+    const dbStatuses = await checkRemoteDatabases(config);
+    const missingDbs = dbStatuses.filter((d) => !d.exists);
+
+    let message = '';
     if (config.username) {
-      try {
-        const sessionRes = await fetch(`${cleanEndpoint}/_session`, {
-          method: 'GET',
-          headers,
-        });
-        if (sessionRes.ok) {
-          const sessionData = await sessionRes.json();
-          if (sessionData.userCtx && sessionData.userCtx.name) {
-            return {
-              success: true,
-              message: `Autenticato come "${sessionData.userCtx.name}". Server CouchDB v${data.version || 'OK'} pronto.`,
-              version: data.version,
-            };
-          }
-        }
-      } catch {
-        // Fallback to basic OK
-      }
+      message = `Autenticato come "${config.username}". Server CouchDB v${data.version || 'OK'} pronto.`;
+    } else {
+      message = `Connessione riuscita a CouchDB! Versione: ${data.version || 'OK'}.`;
+    }
+
+    if (missingDbs.length > 0) {
+      message += ` ⚠ Attenzione: ${missingDbs.length} database su 7 non esistono ancora sul server (${missingDbs.map((d) => d.name).join(', ')}). Clicca su "Inizializza Database" per crearli o creali su Fauxton.`;
+    } else {
+      message += ` Tutti i 7 database esistono e sono pronti per la sincronizzazione! ✓`;
     }
 
     return {
       success: true,
-      message: `Connessione riuscita a CouchDB! Versione: ${data.version || 'OK'}`,
+      message,
       version: data.version,
+      databases: dbStatuses,
+      missingDatabasesCount: missingDbs.length,
     };
   } catch (err: any) {
     return {
@@ -635,13 +839,17 @@ export class CouchDBSyncManager {
             this.addLog('success', `${def.label}: scaricati ${docsRead}, caricati ${docsWritten}`);
           }
         } catch (itemErr: any) {
-          const errMsg = itemErr.message || 'Errore sincronizzazione';
+          const rawMsg = itemErr.message || itemErr.reason || 'Errore sincronizzazione';
+          let errMsg = rawMsg;
+          if (rawMsg.includes('Database does not exist') || rawMsg.includes('not_found') || itemErr.status === 404) {
+            errMsg = `Il database "${dbName}" non esiste sul server CouchDB. Va creato lato server su CouchDB (Fauxton/curl) o cliccando "Inizializza Database".`;
+          }
           this.progress.collections[def.key] = {
             ...this.progress.collections[def.key],
             status: 'error',
             lastError: errMsg,
           };
-          this.addLog('warn', `${def.label}: errore - ${errMsg}`);
+          this.addLog('warn', `${def.label}: ${errMsg}`);
           // Don't abort completely; allow other collections to continue
         }
         this.notifyProgress();
@@ -777,8 +985,12 @@ export class CouchDBSyncManager {
           })
           .on('error', (err: any) => {
             console.error(`Sync error on ${def.label}:`, err);
-            const msg = err.message || 'Errore live sync';
-            this.addLog('error', `Errore live sync su ${def.label}: ${msg}`);
+            const rawMsg = err.message || err.reason || 'Errore live sync';
+            let msg = rawMsg;
+            if (rawMsg.includes('Database does not exist') || rawMsg.includes('not_found') || err.status === 404) {
+              msg = `Il database "${dbName}" non esiste sul server CouchDB. Va creato lato server (Fauxton/curl) o cliccando "Inizializza Database".`;
+            }
+            this.addLog('error', `${def.label}: ${msg}`);
             this.notifyState('error', msg);
             this.progress.state = 'error';
             this.progress.detailedMessage = `Errore su ${def.label}: ${msg}`;

@@ -156,7 +156,7 @@ export const RoleEditorModal: React.FC<RoleEditorModalProps> = ({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Es. Lavoratore Bancolini, Genitore, Studio..."
+              placeholder="Es. Lavoro, Studio, Famiglia, Progetti personali..."
               required
               className="w-full px-3.5 py-2 text-sm bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder-slate-400"
             />
@@ -170,7 +170,7 @@ export const RoleEditorModal: React.FC<RoleEditorModalProps> = ({
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Es. Progetti, mansioni operative, tempo con la famiglia..."
+              placeholder="Es. Attività professionali, crescita personale, tempo con i cari..."
               className="w-full px-3.5 py-2 text-sm bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder-slate-400"
             />
           </div>

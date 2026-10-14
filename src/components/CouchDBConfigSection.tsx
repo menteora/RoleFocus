@@ -30,6 +30,7 @@ import {
   Database,
   Info,
 } from 'lucide-react';
+import type { RemoteDatabaseInfo } from '../db/db';
 
 export const CouchDBConfigSection: React.FC = () => {
   const {
@@ -37,6 +38,8 @@ export const CouchDBConfigSection: React.FC = () => {
     updateCouchDBSettings,
     testCouchDB,
     syncCouchDBNow,
+    initCouchDBDatabases,
+    checkCouchDBDatabases,
     couchDBSyncState,
     couchDBSyncError,
     syncProgress,
@@ -65,6 +68,20 @@ export const CouchDBConfigSection: React.FC = () => {
   const [importStatus, setImportStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [showDiagnosticExplainer, setShowDiagnosticExplainer] = useState(true);
 
+  // CouchDB Server-side Databases Inspection & Init
+  const [remoteDbs, setRemoteDbs] = useState<RemoteDatabaseInfo[] | null>(null);
+  const [isCheckingDbs, setIsCheckingDbs] = useState(false);
+  const [isInitializingDbs, setIsInitializingDbs] = useState(false);
+  const [initResult, setInitResult] = useState<{
+    success: boolean;
+    message: string;
+    createdCount: number;
+    existingCount: number;
+    failedCount: number;
+  } | null>(null);
+  const [copiedCurl, setCopiedCurl] = useState<string | null>(null);
+  const [showManualServerGuide, setShowManualServerGuide] = useState(true);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -89,6 +106,9 @@ export const CouchDBConfigSection: React.FC = () => {
     try {
       const res = await testCouchDB(formState);
       setTestResult(res);
+      if (res.databases) {
+        setRemoteDbs(res.databases);
+      }
     } catch (err: any) {
       setTestResult({
         success: false,
@@ -96,6 +116,53 @@ export const CouchDBConfigSection: React.FC = () => {
       });
     } finally {
       setIsTesting(false);
+    }
+  };
+
+  const handleCheckDatabases = async () => {
+    if (!formState.endpoint) return;
+    setIsCheckingDbs(true);
+    try {
+      const dbs = await checkCouchDBDatabases(formState);
+      setRemoteDbs(dbs);
+    } catch {
+      // ignore
+    } finally {
+      setIsCheckingDbs(false);
+    }
+  };
+
+  const handleInitDatabases = async () => {
+    if (!formState.endpoint) return;
+    setIsInitializingDbs(true);
+    setInitResult(null);
+    try {
+      await updateCouchDBSettings(formState);
+      const res = await initCouchDBDatabases(formState);
+      setInitResult(res);
+      if (res.databases) {
+        setRemoteDbs(res.databases);
+      }
+    } catch (err: any) {
+      setInitResult({
+        success: false,
+        message: err.message || 'Errore durante la creazione dei database.',
+        createdCount: 0,
+        existingCount: 0,
+        failedCount: 7,
+      });
+    } finally {
+      setIsInitializingDbs(false);
+    }
+  };
+
+  const handleCopyCurl = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedCurl(id);
+      setTimeout(() => setCopiedCurl(null), 2500);
+    } catch {
+      // ignore
     }
   };
 
@@ -820,6 +887,267 @@ export const CouchDBConfigSection: React.FC = () => {
           </div>
         </div>
 
+        {/* CouchDB Server-Side Databases & Initialization Box */}
+        <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/80 rounded-2xl space-y-3.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                  Database sul Server CouchDB (7 Collezioni)
+                </h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  CouchDB richiede che ogni database esista fisicamente sul server prima della sincronizzazione.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleCheckDatabases}
+                disabled={isCheckingDbs || !formState.endpoint}
+                className="px-2.5 py-1.5 bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-[11px] font-semibold text-slate-700 dark:text-slate-200 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-40"
+              >
+                <Activity className={`w-3 h-3 ${isCheckingDbs ? 'animate-spin' : ''}`} />
+                <span>{isCheckingDbs ? 'Controllo...' : 'Verifica Database'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleInitDatabases}
+                disabled={isInitializingDbs || !formState.endpoint}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-[11px] font-semibold text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-xs disabled:opacity-40"
+              >
+                <Database className={`w-3 h-3 ${isInitializingDbs ? 'animate-spin' : ''}`} />
+                <span>{isInitializingDbs ? 'Creazione in corso...' : 'Inizializza su CouchDB'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Database Init Result Message */}
+          {initResult && (
+            <div
+              className={`p-3 rounded-xl border flex items-start gap-2 text-xs ${
+                initResult.success
+                  ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
+              }`}
+            >
+              {initResult.success ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              )}
+              <div className="flex-1">
+                <p className="font-medium leading-relaxed">{initResult.message}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Databases Status Grid (if checked or initialized) */}
+          {remoteDbs && remoteDbs.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-1">
+              {remoteDbs.map((dbInfo) => (
+                <div
+                  key={dbInfo.key}
+                  className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 text-xs transition-colors ${
+                    dbInfo.exists
+                      ? 'bg-white dark:bg-slate-900/60 border-emerald-200/80 dark:border-emerald-900/60'
+                      : 'bg-amber-50/60 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-800 dark:text-slate-100 truncate">
+                        {dbInfo.label}
+                      </span>
+                      {dbInfo.key === 'braindump' && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300">
+                          Inbox
+                        </span>
+                      )}
+                    </div>
+                    <code className="text-[10px] font-mono text-slate-500 dark:text-slate-400 block truncate">
+                      {dbInfo.name}
+                    </code>
+                  </div>
+
+                  <span
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium shrink-0 ${
+                      dbInfo.exists
+                        ? 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300'
+                    }`}
+                  >
+                    {dbInfo.exists ? (
+                      <>
+                        <CheckCircle2 className="w-2.5 h-2.5" />
+                        Pronto
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle className="w-2.5 h-2.5" />
+                        Mancante
+                      </>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Server-Side Guide: Fauxton & Curl */}
+          <div className="border-t border-slate-200/70 dark:border-slate-700/70 pt-2.5">
+            <button
+              type="button"
+              onClick={() => setShowManualServerGuide(!showManualServerGuide)}
+              className="flex items-center justify-between w-full text-[11px] font-semibold text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400"
+            >
+              <span className="flex items-center gap-1.5">
+                <Terminal className="w-3.5 h-3.5 text-slate-500" />
+                Guida: come creare i database a mano lato server (Fauxton o curl)
+              </span>
+              <span className="text-[10px] text-indigo-600 dark:text-indigo-400">
+                {showManualServerGuide ? 'Nascondi' : 'Mostra guida'}
+              </span>
+            </button>
+
+            {showManualServerGuide && (
+              <div className="mt-2.5 p-3 bg-white dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-700/80 rounded-xl space-y-3 text-[11px] text-slate-600 dark:text-slate-300">
+                <div>
+                  <h5 className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-blue-500" />
+                    Perché serve crearli lato server?
+                  </h5>
+                  <p className="mt-1 leading-relaxed text-slate-600 dark:text-slate-400">
+                    CouchDB non crea automaticamente database via browser se l'utente non ha ruolo{' '}
+                    <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-[10px]">_admin</code>{' '}
+                    o se il CORS del server CouchDB non abilita il metodo HTTP <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-[10px]">PUT</code>.
+                    Se hai creato in passato solo ruoli e task, il database per il Brain Dump (
+                    <code className="bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 px-1 py-0.5 rounded font-mono text-[10px]">
+                      {(formState.databasePrefix || 'rolefocus_')}braindump
+                    </code>
+                    ) va creato una volta sola sul server.
+                  </p>
+                </div>
+
+                {/* Option 1: Fauxton Web GUI */}
+                <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
+                  <span className="font-bold text-slate-800 dark:text-slate-200 block">
+                    Metodo 1: Dall'interfaccia grafica Web Fauxton
+                  </span>
+                  <ol className="list-decimal list-inside mt-1 space-y-1 text-slate-500 dark:text-slate-400 text-[10px]">
+                    <li>
+                      Apri nel browser:{' '}
+                      <a
+                        href={formState.endpoint ? `${formState.endpoint.replace(/\/+$/, '')}/_utils/` : '#'}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-600 dark:text-blue-400 font-mono underline"
+                      >
+                        {formState.endpoint ? `${formState.endpoint.replace(/\/+$/, '')}/_utils/` : 'http://tuo-couchdb:5984/_utils/'}
+                      </a>
+                    </li>
+                    <li>Accedi con le tue credenziali di amministratore CouchDB.</li>
+                    <li>Clicca sul pulsante arancione in alto a destra <strong>"Create Database"</strong>.</li>
+                    <li>
+                      Inserisci come nome:{' '}
+                      <code className="bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded font-mono font-bold text-slate-900 dark:text-white">
+                        {(formState.databasePrefix || 'rolefocus_')}braindump
+                      </code>
+                    </li>
+                    <li>Seleziona "Non-partitioned" e clicca <strong>Create</strong>.</li>
+                  </ol>
+                </div>
+
+                {/* Option 2: Curl Commands */}
+                <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-lg border border-slate-200/60 dark:border-slate-700/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                      Metodo 2: Da Terminale con curl (Crea solo Brain Dump)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const ep = formState.endpoint ? formState.endpoint.trim().replace(/\/+$/, '') : 'http://localhost:5984';
+                        const pfx = formState.databasePrefix?.trim() || 'rolefocus_';
+                        const u = formState.username || 'admin';
+                        const p = formState.password || 'password';
+                        let hostWithAuth = ep;
+                        try {
+                          const uo = new URL(ep);
+                          hostWithAuth = `${uo.protocol}//${u}:${p}@${uo.host}`;
+                        } catch {
+                          hostWithAuth = ep.replace('://', `://${u}:${p}@`);
+                        }
+                        handleCopyCurl(`curl -X PUT ${hostWithAuth}/${pfx}braindump`, 'curl-single');
+                      }}
+                      className="px-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded text-[10px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 flex items-center gap-1"
+                    >
+                      {copiedCurl === 'curl-single' ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-500" />
+                          <span>Copiato!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copia comando</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <pre className="p-2 bg-slate-900 text-slate-100 rounded text-[10px] font-mono overflow-x-auto select-all">
+                    curl -X PUT {(formState.endpoint ? formState.endpoint.trim().replace(/\/+$/, '') : 'http://localhost:5984').replace('://', `://${formState.username || 'admin'}:${formState.password ? '••••' : 'password'}@`)}/{(formState.databasePrefix || 'rolefocus_')}braindump
+                  </pre>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                      Comando per creare tutti e 7 i database in una volta sola:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const ep = formState.endpoint ? formState.endpoint.trim().replace(/\/+$/, '') : 'http://localhost:5984';
+                        const pfx = formState.databasePrefix?.trim() || 'rolefocus_';
+                        const u = formState.username || 'admin';
+                        const p = formState.password || 'password';
+                        let hostWithAuth = ep;
+                        try {
+                          const uo = new URL(ep);
+                          hostWithAuth = `${uo.protocol}//${u}:${p}@${uo.host}`;
+                        } catch {
+                          hostWithAuth = ep.replace('://', `://${u}:${p}@`);
+                        }
+                        const cmd = `for db in roles slots tasks sessions timer braindump settings; do curl -X PUT ${hostWithAuth}/${pfx}$db; done`;
+                        handleCopyCurl(cmd, 'curl-batch');
+                      }}
+                      className="px-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded text-[10px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 flex items-center gap-1"
+                    >
+                      {copiedCurl === 'curl-batch' ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-500" />
+                          <span>Copiato!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copia comando batch</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <pre className="p-2 bg-slate-900 text-slate-100 rounded text-[10px] font-mono overflow-x-auto select-all">
+                    for db in roles slots tasks sessions timer braindump settings; do curl -X PUT {(formState.endpoint ? formState.endpoint.trim().replace(/\/+$/, '') : 'http://localhost:5984').replace('://', `://${formState.username || 'admin'}:${formState.password ? '••••' : 'password'}@`)}/{(formState.databasePrefix || 'rolefocus_')}$db; done
+                  </pre>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Test Result Message Banner */}
         {testResult && (
           <div
@@ -853,7 +1181,7 @@ export const CouchDBConfigSection: React.FC = () => {
 
         {/* Actions Row */}
         <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 border-t border-slate-100 dark:border-slate-800">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleTestConnection}
@@ -866,6 +1194,20 @@ export const CouchDBConfigSection: React.FC = () => {
                 <Activity className="w-3.5 h-3.5" />
               )}
               <span>{isTesting ? 'Verifica in corso...' : 'Test Connessione'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleInitDatabases}
+              disabled={isInitializingDbs || !formState.endpoint}
+              className="px-3 py-2 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 disabled:opacity-40 text-indigo-700 dark:text-indigo-300 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5"
+            >
+              {isInitializingDbs ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Database className="w-3.5 h-3.5" />
+              )}
+              <span>{isInitializingDbs ? 'Inizializzo...' : 'Inizializza Database'}</span>
             </button>
 
             {formState.enabled && (
