@@ -48,15 +48,14 @@ export const Header: React.FC<HeaderProps> = ({
   const navItems: {
     id: ActiveTab;
     label: string;
-    shortLabel: string;
     icon: React.ComponentType<{ className?: string }>;
   }[] = [
-    { id: 'now', label: 'Adesso', shortLabel: 'Adesso', icon: Clock },
-    { id: 'tasks', label: 'Tutti i Task', shortLabel: 'Task', icon: ListTodo },
-    { id: 'inbox', label: 'Inbox', shortLabel: 'Inbox', icon: Inbox },
-    { id: 'timeline', label: 'Panoramica 24h', shortLabel: 'Panoramica', icon: Calendar },
-    { id: 'config', label: 'Ruoli & Config', shortLabel: 'Ruoli', icon: Sliders },
-    { id: 'history', label: 'Statistiche & Storico', shortLabel: 'Statistiche', icon: History },
+    { id: 'now', label: 'Adesso', icon: Clock },
+    { id: 'tasks', label: 'Task', icon: ListTodo },
+    { id: 'inbox', label: 'Inbox', icon: Inbox },
+    { id: 'timeline', label: 'Panoramica', icon: Calendar },
+    { id: 'config', label: 'Ruoli', icon: Sliders },
+    { id: 'history', label: 'Statistiche', icon: History },
   ];
 
   const hasRunningTimer = activeTimer && (activeTimer.status === 'running' || activeTimer.status === 'paused');
@@ -65,30 +64,25 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 transition-colors shadow-2xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 gap-2 lg:gap-4">
+        <div className="flex items-center h-16 gap-3 lg:gap-5">
           
-          {/* Zone 1: Brand Wordmark (Stable width shrink-0) */}
+          {/* Zone 1: Brand Wordmark (Anchored left) */}
           <div className="flex items-center gap-2.5 shrink-0">
             <button
               onClick={() => setActiveTab('now')}
               className="group flex items-center gap-2.5 text-left focus:outline-none cursor-pointer"
             >
-              <div className="w-8 h-8 rounded-lg bg-blue-600 dark:bg-blue-500 text-white flex items-center justify-center shadow-sm shadow-blue-500/20 group-hover:bg-blue-700 transition-colors shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-blue-600 dark:bg-blue-500 text-white flex items-center justify-center shadow-xs shadow-blue-500/20 group-hover:bg-blue-700 transition-colors shrink-0">
                 <Clock className="w-4 h-4" />
               </div>
               <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white font-['Syne',sans-serif]">
                 RoleFocus
               </span>
             </button>
-            {activeRolesInfo.length > 0 && (
-              <span className="hidden xl:inline-flex text-xs font-medium text-slate-400 dark:text-slate-500">
-                · {activeRolesInfo.length} {activeRolesInfo.length === 1 ? 'ruolo attivo' : 'ruoli attivi'}
-              </span>
-            )}
           </div>
 
-          {/* Zone 2: Navigation Links (High contrast, clearly visible, responsive stable labels) */}
-          <nav className="hidden md:flex items-center justify-center gap-1 xl:gap-1.5 flex-1 min-w-0">
+          {/* Zone 2: Navigation Links (Anchored directly next to Brand, never pushed by sync status) */}
+          <nav className="hidden md:flex items-center gap-1 lg:gap-1.5 shrink-0">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
@@ -96,35 +90,42 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
-                  className={`flex items-center gap-1.5 lg:gap-2 px-2.5 lg:px-3 py-1.5 text-sm font-semibold rounded-xl transition-all cursor-pointer whitespace-nowrap select-none ${
+                  className={`flex items-center gap-1.5 px-2.5 lg:px-3 py-1.5 text-xs lg:text-sm font-semibold rounded-xl transition-all cursor-pointer whitespace-nowrap select-none ${
                     isActive
-                      ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 border border-blue-200/90 dark:border-blue-800/90 shadow-2xs font-bold'
-                      : 'text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white hover:bg-slate-100/90 dark:hover:bg-slate-800/80 border border-transparent'
+                      ? 'bg-blue-600 text-white shadow-xs font-bold'
+                      : 'text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'}`} />
-                  <span className="hidden xl:inline">{item.label}</span>
-                  <span className="inline xl:hidden">{item.shortLabel}</span>
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-500 dark:text-slate-400'}`} />
+                  <span>{item.label}</span>
 
                   {item.id === 'tasks' && urgentTasksCount > 0 && (
                     <span
-                      className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-orange-500 text-white font-mono flex items-center gap-0.5 shadow-2xs shrink-0"
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold font-mono flex items-center gap-0.5 shadow-2xs shrink-0 ${
+                        isActive ? 'bg-white text-orange-600' : 'bg-orange-500 text-white'
+                      }`}
                       title={`${urgentTasksCount} task ${urgentTasksCount === 1 ? 'urgente' : 'urgenti'} con risalto 🔥`}
                     >
-                      <Flame className="w-2.5 h-2.5 fill-white text-white" />
+                      <Flame className={`w-2.5 h-2.5 ${isActive ? 'fill-orange-600 text-orange-600' : 'fill-white text-white'}`} />
                       <span>{urgentTasksCount}</span>
                     </span>
                   )}
 
                   {item.id === 'inbox' && unreadInboxCount > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950 font-mono shadow-2xs shrink-0">
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold font-mono shadow-2xs shrink-0 ${
+                        isActive ? 'bg-amber-300 text-slate-950' : 'bg-amber-500 text-slate-950'
+                      }`}
+                    >
                       {unreadInboxCount}
                     </span>
                   )}
 
                   {item.id === 'now' && hasRunningTimer && (
                     <span
-                      className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse ring-2 ring-emerald-400/40 shrink-0"
+                      className={`w-2 h-2 rounded-full animate-pulse shrink-0 ${
+                        isActive ? 'bg-white ring-2 ring-white/50' : 'bg-emerald-500 ring-2 ring-emerald-400/40'
+                      }`}
                       title="Timer focus in corso"
                     />
                   )}
@@ -133,7 +134,10 @@ export const Header: React.FC<HeaderProps> = ({
             })}
           </nav>
 
-          {/* Zone 3: Action Buttons (Fixed & Stable widths to prevent layout shifts) */}
+          {/* Spacer: Flex-1 ensures menu stays anchored left and actions stay right */}
+          <div className="flex-1" />
+
+          {/* Zone 3: Action Buttons (Fixed, stable footprint so it never shifts navigation) */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* CouchDB Sync Status Indicator & Config Launcher */}
             <button
@@ -141,7 +145,7 @@ export const Header: React.FC<HeaderProps> = ({
               title={
                 isCouchEnabled
                   ? `CouchDB Sync: ${syncProgress?.detailedMessage || couchDBSyncState} (clicca per configurare & visualizzare i log)`
-                  : 'Configura server CouchDB e Backup'
+                  : 'Sincronizzazione CouchDB e Backup'
               }
               className={`h-9 px-2.5 text-xs font-semibold rounded-xl border transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer ${
                 isCouchEnabled && couchDBSyncState === 'connected'
@@ -163,10 +167,8 @@ export const Header: React.FC<HeaderProps> = ({
                 <Server className="w-3.5 h-3.5 text-slate-500 shrink-0" />
               )}
 
-              {/* Stable Label: Fixed width / text so it NEVER shifts the navigation bar */}
-              <span className="hidden xl:inline text-xs font-medium">
-                {isCouchEnabled ? 'CouchDB' : 'Backup'}
-              </span>
+              {/* Stable short label */}
+              <span className="text-xs font-medium">Sync</span>
 
               {/* Live status dot */}
               <span
@@ -193,9 +195,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Clock className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden xl:inline text-xs font-medium">
-                {isSimulatingTime ? 'Simulazione' : 'Simula'}
-              </span>
+              <span className="text-xs font-medium">Simula</span>
               {isSimulatingTime && (
                 <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping shrink-0" />
               )}
@@ -248,7 +248,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   )}
                 </div>
-                <span>{item.shortLabel}</span>
+                <span>{item.label}</span>
               </button>
             );
           })}
